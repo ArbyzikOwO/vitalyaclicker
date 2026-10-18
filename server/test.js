@@ -39,9 +39,94 @@ function client(token) {
     ws.on('error', reject);
   });
 }
+/* одноразовое подключение с произвольной версией сборки — для проверки
+   обязательных обновлений (сервер не пускает старые версии) */
+function authTry(token, version) {
+  return new Promise(resolve => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    let done = false;
+    const fin = m => { if (done) return; done = true; resolve({ reply: m }); try { ws.close(); } catch (e) {} };
+    ws.on('message', d => { const m = JSON.parse(d); if (m.re != null) fin(m); });
+    ws.on('error', () => fin(null));
+    ws.on('close', () => fin(null));
+    ws.on('open', () => ws.send(JSON.stringify({ id: 1, t: 'auth', token, version })));
+    setTimeout(() => fin(null), 1500);
+  });
+}
 
 (async () => {
   await new Promise(r => server.listen(0, r)); port = server.address().port;
+
+  /* ---- помощники для карточных столов ---- */
+  const RANKS36 = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  const rv = x => RANKS36.indexOf(x) + 6;
+  /* гоняем партию за игроков, пока игра сама не закончится */
+  async function driveCards(P, gesture, maxMoves) {
+    let guard = 0;
+    while (guard++ < (maxMoves || 200)) {
+      let cur = null;
+      for (const cl of P) { const m = cl.last('card.state'); if (m && m.game && !m.game.over) { cur = cl; break; } }
+      if (!cur) break;
+      const i = cur.last('card.state').game.turn;
+      if (i < 0) break;
+      const mine = P[i].last('card.state');
+      if (!mine || !mine.game || mine.game.over) break;
+      const act = gesture(mine.game);
+      if (!act) break;
+      const res = await P[i].req('card.act', act);
+      if (!res.ok) { console.log('    !! ход отклонён:', res.err); break; }
+      await sleep(35);
+    }
+  }
+  /* собрать стол, сыграть партию и проверить, что деньги сошлись */
+  async function cardMatch(game, P, bet, gesture, moves) {
+    for (const cl of P) { try { await cl.req('card.leave'); } catch (e) { } }
+    await sleep(60);
+    for (const cl of P) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+    const start = [];
+    for (const cl of P) start.push((await cl.req('wallet.pending')).avail);
+    const cr = await P[0].req('card.create', { game, bet });
+    if (!cr.ok) return { ok: false, err: cr.err };
+    for (let k = 1; k < P.length; k++) { const j = await P[k].req('card.join', { room: cr.room.id }); if (!j.ok) return { ok: false, err: j.err }; }
+    const st0 = await P[0].req('card.start');
+    if (!st0.ok) return { ok: false, err: st0.err };
+    await sleep(90);
+    if (gesture) await driveCards(P, gesture, moves);
+    await sleep(180);
+    const g = P[0].last('card.state') ? P[0].last('card.state').game : null;
+    const end = [];
+    for (const cl of P) end.push((await cl.req('wallet.pending')).avail);
+    const nets = end.map((x, i) => x - start[i]);
+    for (const cl of P) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+    return { ok: true, g: g, nets: nets, okSum: nets.reduce((a, b) => a + b, 0) === 0, pot: g && g.money ? g.money.reduce((a, b) => a + b, 0) : 0 };
+  }
+  const durakGesture = v => {
+    if (!v.can || v.over) return null;
+    if (v.phase === 'defend') {
+      const und = v.table.filter(p => !p.d), t = und[und.length - 1];
+      for (let k = 0; k < v.hand.length; k++) {
+        const c = v.hand[k];
+        const beats = c.s === t.a.s ? rv(c.r) > rv(t.a.r) : (c.s === v.trump && t.a.s !== v.trump);
+        if (beats) return { act: 'defend', card: k };
+      }
+      return { act: 'take' };
+    }
+    if (v.can.pass && (v.hand.length > 3 || guard3())) return { act: 'pass' };
+    const ranks = new Set(v.table.map(p => p.a.r));
+    for (let k = 0; k < v.hand.length; k++) if (v.can.first || ranks.has(v.hand[k].r)) return { act: 'attack', card: k };
+    return v.can.pass ? { act: 'pass' } : null;
+  };
+  const guard3 = () => Math.random() < 0.3;
+  const cheatGesture = v => v.can.place ? { act: 'play', cards: [0] }
+    : (v.can.doubt ? { act: Math.random() < 0.35 ? 'doubt' : 'believe' } : null);
+  const pokerGesture = v => {
+    if (!v.can || !v.can.act) return null;
+    const r0 = Math.random();
+    if (v.can.raise && r0 < 0.15) return { act: 'raise', amount: v.can.minRaise };
+    if (v.can.check && r0 < 0.65) return { act: 'check' };
+    if (v.can.call) return { act: 'call' };
+    return { act: 'fold' };
+  };
 
   console.log('— Регистрация / вход');
   const ra = await post('/api/register', { name: 'Alice', password: 'secret1' });
@@ -166,48 +251,73 @@ function client(token) {
   r = await post('/api/acstatus', { name: 'Dave', password: 'secret4' }); ok(r.ok && !r.banned, 'acstatus: после разбана свободен');
   ok((await post('/api/login', { name: 'Dave', password: 'secret4' })).ok, 'после разбана вход работает');
 
-  console.log('— Блэкджек 1 на 1');
+  console.log('— Карты: Блэкджек на 2–4 игроков');
+  /* Carol выше была забанена и кикнута — подключаем заново и играем втроём */
+  const rcl = await post('/api/login', { name: 'Carol', password: 'secret3' });
+  const C2 = await client(rcl.token);
   await A.req('save.put', { main: makeSave(1e9), baseRev: 1, force: true });
   await B.req('save.put', { main: makeSave(1e9), baseRev: 1, force: true });
-  r = await A.req('bj.create', { bet: 1e12 }); ok(!r.ok, 'ставка больше баланса отклонена');
-  r = await A.req('bj.create', { bet: 50000 }); ok(r.ok, 'стол создан'); await sleep(80);
-  ok(B.last('bj.tables').tables.length === 1, 'стол виден другим');
-  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
-  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
-  const balA0 = (await A.req('wallet.pending')).avail, balB0 = (await B.req('wallet.pending')).avail;
-  r = await B.req('bj.join', { table: A.last('bj.tables').tables[0].id }); ok(r.ok, 'Bob присоединился');
-  await sleep(100);
-  let ga = A.last('bj.state').game, gb = B.last('bj.state').game;
-  ok(ga.me.cards.length === 2 && ga.opp.cards.length === 2 && ga.opp.cards[0] === null && ga.opp.cards[1] !== null, 'соперник: первая карта скрыта, вторая видна');
-  ok(ga.opp.total === null && gb.opp.total === null, 'сумма соперника скрыта до конца');
-  ok(!!A.last('bj.state') && gb.bet === 50000, 'ставка 50000');
-  let guard = 0;
-  while (guard++ < 20) {
-    ga = A.last('bj.state').game; gb = B.last('bj.state').game;
-    if (ga.state === 'done') break;
-    const cur = ga.yourTurn ? A : B, g = ga.yourTurn ? ga : gb;
-    if (!g.yourTurn) { await sleep(50); continue; }
-    if (g.me.total < 15) await cur.req('bj.hit'); else await cur.req('bj.stand');
-    await sleep(60);
-  }
-  ga = A.last('bj.state').game; gb = B.last('bj.state').game;
-  ok(ga.state === 'done' && gb.state === 'done', 'партия завершена: ' + ga.result.reason);
-  ok(ga.opp.cards.every(Boolean), 'в конце карты соперника открыты');
-  const pa = (await A.req('wallet.pending')), pb = (await B.req('wallet.pending'));
-  const netA = pa.avail - balA0, netB = pb.avail - balB0;
-  console.log(`    итог: A ${netA >= 0 ? '+' : ''}${netA}, B ${netB >= 0 ? '+' : ''}${netB}`);
-  ok(ga.result.push ? (netA === 0 && netB === 0) : (netA === -netB && Math.abs(netA) === 50000), 'выплата корректна (победитель +ставка, проигравший −ставка, ничья 0)');
-  ok(netA + netB === 0, 'деньги не создаются и не пропадают');
+  r = await A.req('card.create', { game: 'bj', bet: 1e12 }); ok(!r.ok, 'ставка больше баланса отклонена');
+  r = await A.req('card.create', { game: 'bj', bet: 50000 });
+  ok(r.ok && r.room.state === 'lobby' && r.room.min === 2 && r.room.max === 4, 'стол блэкджека создан (2–4 игрока)');
+  const bjRoom = r.room.id;
+  await sleep(80);
+  ok(B.last('card.rooms') && B.last('card.rooms').rooms.some(x => x.id === bjRoom), 'стол виден другим в списке');
+  ok(!(await A.req('card.create', { game: 'bj', bet: 50000 })).ok, 'второй стол создать нельзя, пока сидишь за первым');
+  ok(!(await A.req('card.start')).ok, 'одному раздачу не начать');
+  for (const cl of [A, B, C2]) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+  const cBal = [(await A.req('wallet.pending')).avail, (await B.req('wallet.pending')).avail, (await C2.req('wallet.pending')).avail];
+  r = await B.req('card.join', { room: bjRoom }); ok(r.ok && r.room.players.length === 2, 'Bob сел за стол');
+  r = await C2.req('card.join', { room: bjRoom }); ok(r.ok && r.room.players.length === 3, 'Carol села за стол (игра на троих)');
+  ok(!(await B.req('card.start')).ok, 'начать игру может только создатель');
+  ok(!(await A.req('card.act', { act: 'hit' })).ok, 'до раздачи ходов нет');
+  r = await A.req('card.start'); ok(r.ok && r.room.state === 'play', 'хозяин начал раздачу');
+  await sleep(120);
+  let ga = A.last('card.state').game;
+  ok(ga && ga.game === 'bj' && ga.hand.length === 2 && ga.players.length === 3, 'каждому из троих сдали по две карты');
+  ok(ga.names.join(',') === 'Alice,Bob,Carol' && ga.pot === 150000, 'имена и банк пришли клиенту');
+  await driveCards([A, B, C2], v => v.can.hit && v.total < 16 ? { act: 'hit' } : (v.can.stand ? { act: 'stand' } : null), 40);
+  await sleep(150);
+  ga = A.last('card.state').game;
+  ok(ga.over, 'раздача блэкджека завершена');
+  const cpa = await A.req('wallet.pending'), cpb = await B.req('wallet.pending'), cpc = await C2.req('wallet.pending');
+  const cNets = [cpa.avail - cBal[0], cpb.avail - cBal[1], cpc.avail - cBal[2]];
+  ok(cNets.reduce((s, x) => s + x, 0) === 0, 'блэкджек: деньги не создаются и не пропадают');
+  ok(ga.money && ga.money.reduce((s, x) => s + x, 0) === 150000, 'банк 150000 разошёлся полностью');
+  for (const [cl, p] of [[A, cpa], [B, cpb], [C2, cpc]]) await cl.req('wallet.ack', { ids: p.items.map(i => i.id) });
+  await A.req('card.leave');
 
-  console.log('— Отключение во время игры (техническое поражение)');
-  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
-  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
-  await A.req('save.put', { main: makeSave(1e9), baseRev: 2 });
-  await B.req('save.put', { main: makeSave(1e9), baseRev: 2 });
-  await A.req('bj.create', { bet: 10000 }); await sleep(80);
-  await B.req('bj.join', { table: A.last('bj.tables').tables.slice(-1)[0].id });
-  await sleep(100);
-  ok(A.last('bj.state').game.state === 'play' || A.last('bj.state').game.state === 'done', 'вторая игра запущена');
+  console.log('— Карты: правила игр (cards.js / poker.js)');
+  const CL = require('./cards.js'), PK = require('./poker.js');
+  ok(CL.deck36().length === 36 && CL.deck52().length === 52, 'колоды на 36 и 52 карты');
+  ok(new Set(CL.deck36().map(c => c.r + c.s)).size === 36 && new Set(CL.deck52().map(c => c.r + c.s)).size === 52, 'в колодах нет повторов');
+  ok(CL.handTotal([{ r: 'A', s: '♠' }, { r: 'K', s: '♥' }]) === 21, 'блэкджек: A+K = 21');
+  ok(CL.handTotal([{ r: 'A', s: '♠' }, { r: 'A', s: '♥' }, { r: '9', s: '♠' }]) === 21, 'блэкджек: два туза считаются 11 и 1');
+  const cc = x => ({ r: x.slice(0, -1), s: x.slice(-1) });
+  ok(PK.rank5([cc('10♥'), cc('J♥'), cc('Q♥'), cc('K♥'), cc('A♥')])[0] === 8, 'покер: стрит-флеш распознан');
+  ok(PK.rank5([cc('A♠'), cc('2♥'), cc('3♦'), cc('4♣'), cc('5♠')])[0] === 4, 'покер: стрит с тузом снизу распознан');
+  ok(PK.rank5([cc('K♠'), cc('K♥'), cc('K♦'), cc('4♣'), cc('4♠')])[0] === 6, 'покер: фулл-хаус распознан');
+  ok(PK.rank5([cc('2♠'), cc('5♠'), cc('7♠'), cc('9♠'), cc('J♠')])[0] === 5, 'покер: флеш распознан');
+  ok(PK.rank5([cc('A♠'), cc('A♥'), cc('7♦'), cc('4♣'), cc('2♠')])[0] === 1, 'покер: пара распознана');
+  ok(PK.best7([cc('A♠'), cc('A♥'), cc('K♦'), cc('K♣'), cc('K♥'), cc('2♣'), cc('3♦')])[0] === 6, 'покер: лучшая рука из семи карт найдена');
+  const pots = PK.sidePots({ n: 3, total: [1000, 500, 1000], folded: [false, false, false] });
+  ok(pots.length === 2 && pots[0].amount === 1500 && pots[1].amount === 1000, 'покер: побочные банки считаются верно');
+
+  console.log('— Карты: Пьяница, Дурак, Верю-не-верю, Покер');
+  const war = await cardMatch('war', [A, B, C2], 20000, null, 1);
+  ok(war.ok && war.g.over, 'пьяница: партия сразу доиграна картами');
+  ok(war.okSum && war.pot === 60000, 'пьяница: банк 60000 и деньги сходятся');
+  const durak = await cardMatch('durak', [A, B, C2], 20000, durakGesture, 200);
+  ok(durak.ok && durak.g.over, 'дурак: партия доиграна (' + durak.g.log.slice(-1)[0] + ')');
+  ok(durak.okSum && durak.pot === 60000, 'дурак: банк 60000 и деньги сходятся');
+  const cheat = await cardMatch('cheat', [A, B, C2], 20000, cheatGesture, 200);
+  ok(cheat.ok && cheat.g.over, 'верю-не-верю: партия доиграна');
+  ok(cheat.okSum && cheat.pot === 60000, 'верю-не-верю: банк 60000 и деньги сходятся');
+  const poker = await cardMatch('poker', [A, B, C2], 20000, pokerGesture, 200);
+  ok(poker.ok && poker.g.over, 'покер: раздача доиграна (борд ' + poker.g.board.length + ' карт)');
+  ok(poker.okSum && poker.pot === 60000, 'покер: банк 60000 и деньги сходятся');
+  ok(poker.g.street === 'river' || poker.g.street !== '', 'покер: улицы дошли до конца');
+  ok(!(await A.req('card.create', { game: 'нет-такой', bet: 50000 })).ok, 'неизвестная игра отклонена');
 
   console.log('— Опыт, профиль, лидерборд');
   await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
@@ -301,27 +411,58 @@ function client(token) {
   ok(ev.returned === 500 * 36 && ev.hits.length === 1 && ev.net === 500 * 36 - 1500, 'зеро забирает равные шансы, но платит прямую ставку на 0');
   ok(RL.ORDER.every((n, i) => Math.abs(RL.angleOf(n) - (i * RL.SPAN + RL.SPAN / 2)) < 1e-9) && RL.angleOf(36) < 360, 'углы секторов соответствуют порядку колеса');
 
-  console.log('— Дуэли: рулетка на цвет');
-  r = await A.req('duel.create', { game: 'roulette', bet: 50000, color: 'red' });
-  ok(r.ok, 'вызов на рулетку создан');
+  console.log('— Рулеточный стол: 2–4 игрока (полный стол как в аркаде)');
+  for (const [nm, cl] of [['A', A], ['B', B], ['C', C2]]) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+  r = await A.req('roul.create', { bet: 50000, max: 3 });
+  ok(r.ok && r.room && r.room.state === 'lobby' && r.room.max === 3, 'стол рулетки создан на 3 игрока');
+  const roomId = r.room.id;
   await sleep(80);
-  const rt = (await B.req('duel.tables')).tables.find(t => t.game === 'roulette');
-  ok(rt && rt.color === 'red', 'в списке вызовов виден цвет создателя');
-  ok(!(await B.req('duel.join', { table: rt.id })).ok, 'без выбора цвета рулетку принять нельзя');
-  ok(!(await B.req('duel.join', { table: rt.id, color: 'red' })).ok, 'занятый создателем цвет выбрать нельзя');
-  const rBalA = (await A.req('wallet.pending')).avail, rBalB = (await B.req('wallet.pending')).avail;
-  r = await B.req('duel.join', { table: rt.id, color: 'black' });
-  ok(r.ok, 'соперник принял вызов на противоположный цвет');
-  await sleep(120);
-  const rr = A.last('duel.result');
-  ok(rr && rr.res.game === 'roulette' && rr.res.myColor === 'red' && rr.res.oppColor === 'black', 'результат рулетки: цвета обоих игроков');
-  ok(rr.res.num >= 0 && rr.res.num <= 36 && (rr.res.color === 'red' || rr.res.color === 'black' || rr.res.color === 'green'), 'результат рулетки: выпавшее число и цвет');
-  ok(rr.res.color === 'green' ? (rr.res.push && rr.res.winner === null) : (rr.res.color === 'red' ? rr.res.youWon : !rr.res.youWon), 'победитель рулетки определён по выпавшему цвету');
-  const rpA = await A.req('wallet.pending'), rpB = await B.req('wallet.pending');
-  const rNetA = rpA.avail - rBalA, rNetB = rpB.avail - rBalB;
-  ok(rNetA + rNetB === 0 && (rr.res.push ? rNetA === 0 : Math.abs(rNetA) === 50000), 'выплата рулетки: деньги не создаются и не пропадают');
+  ok(C2.last('roul.rooms') && C2.last('roul.rooms').rooms.some(x => x.id === roomId), 'стол виден другим игрокам в списке');
+  ok(!(await A.req('roul.create', { bet: 50000 })).ok, 'второй стол создать нельзя, пока сидишь за первым');
+  ok(!(await A.req('roul.start')).ok, 'одному игру не начать');
+  const rBalA = (await A.req('wallet.pending')).avail, rBalB = (await B.req('wallet.pending')).avail, rBalC = (await C2.req('wallet.pending')).avail;
+  r = await B.req('roul.join', { room: roomId }); ok(r.ok && r.room.players.length === 2, 'второй игрок сел за стол');
+  r = await C2.req('roul.join', { room: roomId }); ok(r.ok && r.room.players.length === 3, 'третий игрок сел за стол');
+  ok(!(await B.req('roul.join', { room: roomId })).ok, 'дважды за один стол не сесть');
+  r = await A.req('roul.start'); ok(r.ok && r.room.state === 'bet', 'хозяин начал игру — все раскладывают фишки');
+  ok(!(await A.req('roul.bets', { bets: [{ id: 'red', amount: 1000 }] })).ok, 'неполный расклад отклонён (нужна вся ставка)');
+  ok(!(await A.req('roul.bets', { bets: [{ id: 'нет-такой', amount: 50000 }] })).ok, 'неизвестная ставка отклонена');
+  ok(!(await A.req('roul.bets', { bets: [{ id: 'red', amount: 60000 }] })).ok, 'расклад больше ставки отклонён');
+  r = await A.req('roul.bets', { bets: [{ id: 'red', amount: 50000 }] }); ok(r.ok && r.room.you.ready && r.room.state === 'bet', 'расклад первого принят');
+  r = await B.req('roul.bets', { bets: [{ id: 'black', amount: 50000 }] }); ok(r.ok, 'расклад второго принят');
+  ok(!(await A.req('roul.bets', { bets: [{ id: 'red', amount: 50000 }] })).ok, 'повторно сдать расклад нельзя');
+  await sleep(60);
+  ok(A.last('roul.room') && !A.last('roul.room').room.players[0].bets, 'до спина чужие расклады скрыты');
+  r = await C2.req('roul.bets', { bets: [{ id: 'n:0', amount: 50000 }] }); ok(r.ok && r.room.state === 'done', 'расклад третьего принят — колесо крутится');
+  await sleep(150);
+  const rr = C2.last('roul.room').room;
+  ok(rr.state === 'done' && rr.num >= 0 && rr.num <= 36, 'колесо остановилось на числе ' + rr.num + ' (' + rr.color + ')');
+  ok(rr.players.length === 3 && rr.players.every(p => p.bets && typeof p.net === 'number'), 'после спина расклады всех игроков раскрыты');
+  const wn = rr.players.filter(p => p.win);
+  ok(wn.length === 1, 'ровно один игрок забрал банк');
+  const rpA = await A.req('wallet.pending'), rpB = await B.req('wallet.pending'), rpC = await C2.req('wallet.pending');
+  const nets = [rpA.avail - rBalA, rpB.avail - rBalB, rpC.avail - rBalC];
+  ok(nets.reduce((s, x) => s + x, 0) === 0, 'рулеточный стол: деньги не создаются и не пропадают');
+  const wi = rr.players.findIndex(p => p.win);
+  ok(nets[wi] === 100000 && nets.filter((x, i) => i !== wi).every(x => x === -50000), 'банк 150000 ушёл победителю (+100000, остальные −50000)');
+  ok(rr.players[wi].payout === 150000, 'победитель получил весь банк (150000)');
   await A.req('wallet.ack', { ids: rpA.items.map(i => i.id) });
   await B.req('wallet.ack', { ids: rpB.items.map(i => i.id) });
+  await C2.req('wallet.ack', { ids: rpC.items.map(i => i.id) });
+  /* выход со стола во время ставок возвращает ставку всем */
+  r = await A.req('roul.create', { bet: 10000, max: 2 }); const id2 = r.room.id;
+  await B.req('roul.join', { room: id2 });
+  await A.req('roul.start');
+  await B.req('roul.leave');
+  await sleep(120);
+  const bA = await A.req('wallet.pending'), bB = await B.req('wallet.pending');
+  ok(bA.items.filter(i => i.kind === 'debit' && i.amount === 10000).length === 1 && bA.items.filter(i => i.kind === 'credit' && i.amount === 10000).length === 1, 'выход со стола во время ставок вернул ставку первому');
+  ok(bB.items.some(i => i.kind === 'credit' && i.amount === 10000), 'вышедший тоже получил ставку назад');
+  await A.req('wallet.ack', { ids: bA.items.map(i => i.id) });
+  await B.req('wallet.ack', { ids: bB.items.map(i => i.id) });
+  await A.req('roul.leave');
+  await sleep(80);
+  ok(!(await A.req('roul.rooms')).room && !(await B.req('roul.rooms')).room, 'после выхода за столом никого не осталось');
 
   console.log('— Профиль: аватар, цвет, ник, список игроков');
   r = await A.req('profile.get');
@@ -417,6 +558,20 @@ function client(token) {
   await sleep(80);
   r = await B.req('admin.releasestatus');
   ok(!r.ok, 'состояние выпуска видит только владелец');
+
+  console.log('\n— Обязательные обновления');
+  ok(ReleasePlan.cmpVersion('1.0.10', '1.0.9') === 1, 'сравнение версий: 1.0.10 новее 1.0.9');
+  ok(ReleasePlan.cmpVersion('v1.2', '1.2.0') === 0, 'сравнение версий: v1.2 = 1.2.0');
+  ok(ReleasePlan.cmpVersion('0.9.9', '1.0.0') === -1, 'сравнение версий: 0.9.9 старее 1.0.0');
+  ok(ReleasePlan.isVersion('1.0.7') && ReleasePlan.isVersion('2.1') && !ReleasePlan.isVersion('плохая') && !ReleasePlan.isVersion('999'), 'проверка формата версии');
+  const ping = await fetch(`http://127.0.0.1:${port}/api/ping`).then(x => x.json());
+  ok(ping.ok && !!ping.version, 'ping отдаёт текущую версию (' + ping.version + ')');
+  let old = await authTry(ra.token, '0.0.1');
+  ok(old.reply && old.reply.ok === false && old.reply.err === 'update' && old.reply.needUpdate && old.reply.needUpdate.version, 'старая сборка не пускается: требуется обновление до v' + (old.reply && old.reply.needUpdate && old.reply.needUpdate.version));
+  old = await authTry(ra.token, '99.0.0');
+  ok(old.reply && old.reply.ok === true, 'новая (или такая же) сборка пускается');
+  old = await authTry(ra.token, '');
+  ok(old.reply && old.reply.ok === true, 'сборка без версии (браузер) пускается');
 
   console.log(`\nИтого: ${pass} прошло, ${fail} упало`);
   process.exit(fail ? 1 : 0);

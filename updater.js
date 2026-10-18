@@ -24,9 +24,14 @@
   const BRANCHES = ['main', 'master'];
   const REL_PAGE = REPO ? 'https://github.com/' + REPO + '/releases/latest' : '';
   const DL_BASE = REPO ? 'https://github.com/' + REPO + '/releases/latest/download/' : '';
-  const CHECK_MS = 30 * 60 * 1000;
+  const CHECK_MS = 3 * 60 * 1000;
   const SERVER_TTL = 5 * 60 * 1000;
   const DEFAULT_ASSET = { win: 'VitalyaClicker.exe', android: 'VitalyaClicker.apk', linux: 'VitalyaClicker.AppImage' };
+  /* Обновления обязательные: как только вышла новая версия, играть нельзя,
+     пока игрок не обновятся. В обычном браузере (web) принуждать не нужно —
+     страницу всегда отдаёт сам сервер с актуальными файлами. */
+  const FORCED = PLATFORM === 'win' || PLATFORM === 'android' || PLATFORM === 'linux';
+  const REL_URL = REPO ? 'https://github.com/' + REPO + '/releases/latest' : '';
 
   let release = null;   // { version, tag_name, notes, download, assetName }
   let checkedOnce = false;
@@ -67,6 +72,7 @@
     '#vcUpBox .vc-ver{font:700 12.5px "Segoe UI",system-ui,sans-serif;color:var(--muted,#8792a6);margin-bottom:12px}',
     '#vcUpBox .vc-ver b{color:var(--green,#3ddc84)}',
     '#vcUpBox .vc-notes{font:600 12px "Segoe UI",system-ui,sans-serif;color:var(--muted,#8792a6);max-height:150px;overflow:auto;text-align:left;white-space:pre-wrap;background:#0e121a;border:1px solid #1c2331;border-radius:10px;padding:10px;margin-bottom:14px}',
+    '#vcUpBox .vc-force{font:700 12.5px "Segoe UI",system-ui,sans-serif;color:#ff9f1c;background:rgba(255,159,28,.1);border:1px solid rgba(255,159,28,.4);border-radius:10px;padding:9px 11px;margin-bottom:12px;text-align:left;line-height:1.5}',
     '#vcUpBox .vc-bar{display:none;height:10px;border-radius:6px;background:#0e121a;border:1px solid #1c2331;overflow:hidden;margin-bottom:12px}',
     '#vcUpBox .vc-bar.show{display:block}',
     '#vcUpBox .vc-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ffc93c,#ff9f1c)}',
@@ -177,7 +183,8 @@
       };
       checkedOnce = true;
       banner(true, 'v' + ver);
-      if (!silent) openBox();
+      if (FORCED) openBox();            /* обязательное обновление — окно не закрывается */
+      else if (!silent) openBox();
       return release;
     } catch (e) {
       if (!silent) toast('⚠️ Не удалось проверить обновления');
@@ -196,18 +203,39 @@
         : 'Откроется страница релиза — скачайте новую версию.';
     const notes = r.notes.trim() ? h(r.notes.slice(0, 1500)) : '<span style="opacity:.7">Обновление игры.</span>';
     const o = box('<div class="vc-card">'
-      + '<h3>🚀 Доступно обновление</h3>'
+      + '<h3>' + (FORCED ? '⛔ Нужно обновиться' : '🚀 Доступно обновление') + '</h3>'
       + '<div class="vc-ver">установлено: <b>v' + h(LOCAL) + '</b> &nbsp;·&nbsp; новое: <b>v' + h(r.version) + '</b></div>'
+      + (FORCED ? '<div class="vc-force">Играть в старой версии нельзя: онлайн-сервер и другие игроки уже на новой. Обновитесь — это займёт минуту.</div>' : '')
       + '<div class="vc-notes">' + notes + '</div>'
       + '<div class="vc-bar"><i></i></div>'
       + '<div class="vc-act">'
       + '<button class="vc-go">' + (canAuto ? '⬇️ Обновить и перезапустить' : '⬇️ Скачать обновление') + '</button>'
-      + '<button class="vc-sec vc-later">Позже</button>'
+      + (FORCED ? '' : '<button class="vc-sec vc-later">Позже</button>')
       + '</div>'
       + '<div class="vc-msg">' + h(hint) + '</div>'
+      + (FORCED && REL_URL ? '<a class="vc-link" href="' + h(REL_URL) + '" target="_blank" rel="noopener">Скачать вручную</a>' : '')
       + '</div>');
-    o.querySelector('.vc-later').onclick = () => o.classList.remove('show');
+    const later = o.querySelector('.vc-later');
+    if (later) later.onclick = () => o.classList.remove('show');
     o.querySelector('.vc-go').onclick = doUpdate;
+  }
+
+  /* принудительное обновление по требованию сервера (клиент устарел) */
+  function force(info) {
+    info = info || {};
+    const ver = String(info.version || '').trim().replace(/^v/i, '');
+    if (!ver || cmpVer(ver, LOCAL) <= 0) return false;
+    const assetName = info.assetName || (release && release.assetName) || DEFAULT_ASSET[PLATFORM] || '';
+    release = {
+      version: ver, tag_name: 'v' + ver, notes: String(info.notes || ''),
+      assetName: assetName,
+      download: assetName ? DL_BASE + assetName : REL_PAGE,
+      html_url: REL_PAGE, assets: assetName ? [{ name: assetName }] : []
+    };
+    checkedOnce = true;
+    banner(true, 'v' + ver);
+    openBox();
+    return true;
   }
 
   function setMsg(text, color) {
@@ -263,7 +291,7 @@
       /* запасной путь: ссылка, по которой можно просто тапнуть */
       setMsgHtml('Если загрузка не открылась сама — тапните по кнопке:'
         + '<br><a class="vc-link" href="' + h(r.download) + '" target="_system" rel="noopener">⬇️ Скачать ' + h(r.assetName) + '</a>'
-        + '<br><span style="opacity:.7">«Позже» — установить в другой раз.</span>');
+        + (FORCED ? '<br><span style="opacity:.7">После установки откройте игру заново.</span>' : '<br><span style="opacity:.7">«Позже» — установить в другой раз.</span>'));
       return;
     }
 
@@ -295,20 +323,28 @@
   /* ---------------------- запуск ---------------------- */
   function start() {
     injectCss();
-    setTimeout(() => check(true), 4000);
+    setTimeout(() => check(true), 1500);
     setInterval(() => check(true), CHECK_MS);
     window.addEventListener('vc:update-available', () => check(false));
+    /* пока есть обязательное обновление — окно не должно оставаться скрытым */
+    setInterval(() => {
+      if (!FORCED || !release) return;
+      const o = document.getElementById('vcUpBox');
+      if (!o || !o.classList.contains('show')) openBox();
+    }, 20000);
   }
 
   window.VCUpdater = {
     check: check,
     open: openBox,
     install: doUpdate,
+    force: force,
     lock: lock,
     serverUrl: serverUrl,
     version: LOCAL,
     repo: REPO,
     platform: PLATFORM,
+    forced: FORCED,
     get release() { return release; }
   };
 

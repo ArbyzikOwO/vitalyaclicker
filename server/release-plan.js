@@ -59,4 +59,18 @@ function pickMode(requested, parts, cloud) {
   throw new Error('Собрать нечем: на этом компьютере не хватает ' + c.missing.join(', ') + ', и не настроен доступ к GitHub');
 }
 
-module.exports = { LOCAL_PARTS, missingLocal, canLocal, canCloud, caps, pickMode };
+/* сравнение версий: 1.0.10 > 1.0.9, 'v1.2' == '1.2.0'.
+   Нужно и серверу (не пускать старые сборки), и тестам. */
+function cmpVersion(a, b) {
+  const parts = v => String(v == null ? '' : v).replace(/^v/i, '').split(/[.\-+_]/).map(x => parseInt(x, 10) || 0);
+  const A = parts(a), B = parts(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] || 0, y = B[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+/* похоже ли на версию вида 1.2 или 1.2.3 */
+function isVersion(v) { return /^\d+\.\d+(\.\d+)?$/.test(String(v == null ? '' : v).replace(/^v/i, '')); }
+
+module.exports = { LOCAL_PARTS, missingLocal, canLocal, canCloud, caps, pickMode, cmpVersion, isVersion };
