@@ -577,6 +577,9 @@ function authTry(token, version) {
   r = await A.req('admin.release', { version: '1.0.9', mode: 'телепорт' });
   ok(!r.ok && /способ/i.test(r.err || ''), 'неизвестный способ сборки отклонён');
   await sleep(80);
+  r = await A.req('admin.release', { version: '1.1', mode: 'телепорт' });
+  ok(!r.ok && /способ/i.test(r.err || ''), 'версия из двух чисел (1.1) проходит проверку и уходит в сборку как 1.1.0');
+  await sleep(80);
   r = await A.req('admin.releasestatus');
   ok(r.ok && r.running === false, 'после отказа сборка не запущена и игра разблокирована');
   await sleep(80);
@@ -588,6 +591,9 @@ function authTry(token, version) {
   ok(ReleasePlan.cmpVersion('v1.2', '1.2.0') === 0, 'сравнение версий: v1.2 = 1.2.0');
   ok(ReleasePlan.cmpVersion('0.9.9', '1.0.0') === -1, 'сравнение версий: 0.9.9 старее 1.0.0');
   ok(ReleasePlan.isVersion('1.0.7') && ReleasePlan.isVersion('2.1') && !ReleasePlan.isVersion('плохая') && !ReleasePlan.isVersion('999'), 'проверка формата версии');
+  ok(ReleasePlan.normalizeVersion('1.1') === '1.1.0' && ReleasePlan.normalizeVersion('v1.0.7') === '1.0.7'
+     && ReleasePlan.normalizeVersion('1.0.7') === '1.0.7' && ReleasePlan.normalizeVersion('999') === ''
+     && ReleasePlan.normalizeVersion('1.0.7.2') === '', 'версия 1.1 -> 1.1.0: сборщику нужны три числа');
   const ping = await fetch(`http://127.0.0.1:${port}/api/ping`).then(x => x.json());
   ok(ping.ok && !!ping.version, 'ping отдаёт текущую версию (' + ping.version + ')');
   let old = await authTry(ra.token, '0.0.1');

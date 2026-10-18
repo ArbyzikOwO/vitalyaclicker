@@ -1192,8 +1192,9 @@ const handlers = {
   async 'admin.release'(ctx, m) {
     needOwner(ctx);
     if (RELEASE.running) throw new Error('Сборка уже идёт: ' + (RELEASE.text || '…'));
-    const version = String(m.version || '').trim().replace(/^v/i, '');
-    if (version && !/^\d{1,3}\.\d{1,3}(\.\d{1,3}){0,2}$/.test(version)) throw new Error('Версия должна быть вида 1.0.1');
+    /* сборщик принимает только три числа: '1.1' превращаем в '1.1.0' */
+    const version = ReleasePlan.normalizeVersion(m.version);
+    if (String(m.version || '').trim() && !version) throw new Error('Версия должна быть вида 1.0.1');
     const notes = cleanText(m.notes, 300);
     const mode = String(m.mode || 'auto').toLowerCase();
     RELEASE.running = true; RELEASE.version = version; RELEASE.startedAt = now();

@@ -73,4 +73,14 @@ function cmpVersion(a, b) {
 /* похоже ли на версию вида 1.2 или 1.2.3 */
 function isVersion(v) { return /^\d+\.\d+(\.\d+)?$/.test(String(v == null ? '' : v).replace(/^v/i, '')); }
 
-module.exports = { LOCAL_PARTS, missingLocal, canLocal, canCloud, caps, pickMode, cmpVersion, isVersion };
+/* Сборщики (electron-builder, Gradle) требуют ровно три числа: '1.1' -> '1.1.0'.
+   Если это не версия — возвращает пустую строку (см. isVersion). */
+function normalizeVersion(v) {
+  const s = String(v == null ? '' : v).trim().replace(/^v/i, '');
+  if (!isVersion(s)) return '';
+  const p = s.split('.');
+  while (p.length < 3) p.push('0');
+  return p.join('.');
+}
+
+module.exports = { LOCAL_PARTS, missingLocal, canLocal, canCloud, caps, pickMode, cmpVersion, isVersion, normalizeVersion };

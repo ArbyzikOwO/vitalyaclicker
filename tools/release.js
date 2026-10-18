@@ -6,6 +6,7 @@
    Запускается сервером по кнопке «Выпустить обновление» (owner),
    но можно и вручную:
        node tools/release.js --version 1.0.1
+       node tools/release.js --version 1.1     (то же, что 1.1.0)
        node tools/release.js                 (версия поднимется сама)
        node tools/release.js --no-upload     (только собрать)
        node tools/release.js --upload-only   (только выложить уже собранное в dist)
@@ -17,6 +18,8 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { spawnSync } = require('child_process');
+/* общая логика версий с сервером (cmpVersion/isVersion/normalizeVersion) */
+const ReleasePlan = require('../server/release-plan.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BUILD = path.join(ROOT, '_build');
@@ -56,7 +59,11 @@ function die(m) { process.stdout.write('FAIL: ' + m + '\n'); process.exit(1); }
 const argv = process.argv.slice(2);
 const argVal = (name) => { const i = argv.indexOf(name); return i >= 0 && argv[i + 1] ? argv[i + 1] : ''; };
 const has = name => argv.indexOf(name) >= 0;
-const WANTED_VERSION = argVal('--version').replace(/^v/i, '');
+/* сборщики (electron-builder, Gradle) принимают версию только из трёх чисел:
+   '1.1' -> '1.1.0', 'v1.2.3' -> '1.2.3' */
+const RAW_VERSION = argVal('--version');
+const WANTED_VERSION = ReleasePlan.normalizeVersion(RAW_VERSION);
+if (RAW_VERSION && !WANTED_VERSION) die('Некорректная версия: ' + RAW_VERSION + ' — нужно вида 1.1 или 1.1.0');
 const NOTES = argVal('--notes');
 const NO_UPLOAD = has('--no-upload');
 const UPLOAD_ONLY = has('--upload-only');
@@ -120,7 +127,7 @@ function bump(v) {
     const vFile = path.join(ROOT, 'version.json');
     const cur = readJson(vFile, { version: '1.0.0' });
     const version = WANTED_VERSION || bump(cur.version);
-    if (!/^\d{1,3}\.\d{1,3}(\.\d{1,3}){0,2}$/.test(version)) return die('Некорректная версия: ' + version);
+    if (!ReleasePlan.isVersion(version)) return die('Некорректная версия: ' + version);
     const tag = 'v' + version;
 
     info('=== выпуск ' + tag + ' (было ' + cur.version + ') ===');
