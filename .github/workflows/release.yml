@@ -66,12 +66,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Пакеты Android (platform 34, build-tools 34.0.0)
+      - name: Android SDK (platform 34, build-tools 34.0.0)
         shell: pwsh
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+        run: |
+          $sdk = $env:ANDROID_SDK_ROOT
+          if (-not $sdk) { $sdk = $env:ANDROID_HOME }
+          if (-not $sdk -or -not (Test-Path $sdk)) { throw "Android SDK не найден на сборщике" }
+          Write-Host "Android SDK: $sdk"
+          $need = @()
+          if (-not (Test-Path "$sdk\platforms\android-34")) { $need += 'platforms;android-34' }
+          if (-not (Test-Path "$sdk\build-tools\34.0.0")) { $need += 'build-tools;34.0.0' }
+          if (-not (Test-Path "$sdk\platform-tools")) { $need += 'platform-tools' }
+          if ($need.Count -eq 0) { Write-Host "всё нужное уже установлено"; exit 0 }
+          $sm = Get-ChildItem "$sdk\cmdline-tools\*\bin\sdkmanager.bat" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sm) { throw "sdkmanager не найден в $sdk\cmdline-tools" }
+          Write-Host ("устанавливаю: " + ($need -join ', '))
+          ("y`r`n" * 40) | & $sm.FullName --licenses | Out-Null
+          ("y`r`n" * 40) | & $sm.FullName --install @need
 
       - name: Зависимости (сервер, EXE, APK)
         shell: pwsh
