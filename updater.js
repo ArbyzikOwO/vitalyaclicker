@@ -108,11 +108,14 @@
     let b = document.getElementById('vcUpBanner');
     if (!b) {
       b = document.createElement('div'); b.id = 'vcUpBanner';
+      /* при обязательном обновлении закрыть баннер нельзя — кнопки «Позже» нет */
       b.innerHTML = '<span class="vc-ico">🚀</span><span class="vc-txt">Доступно обновление <b class="vc-tag"></b></span>'
-        + '<button class="vc-btn vc-do">Обновить</button><button class="vc-x" title="Позже">✕</button>';
+        + '<button class="vc-btn vc-do">Обновить</button>'
+        + (FORCED ? '' : '<button class="vc-x" title="Позже">✕</button>');
       document.body.appendChild(b);
       b.querySelector('.vc-btn').onclick = () => openBox();
-      b.querySelector('.vc-x').onclick = () => b.classList.remove('show');
+      const bx = b.querySelector('.vc-x');
+      if (bx) bx.onclick = () => b.classList.remove('show');
     }
     b.querySelector('.vc-tag').textContent = tag || '';
     b.classList.toggle('show', !!show);
@@ -321,17 +324,38 @@
   }
 
   /* ---------------------- запуск ---------------------- */
+
+  /* Обязательное обновление: окно нельзя закрыть — оно только «обновить».
+     Если игрок всё же как-то его убрал (или перезашёл) — оно возвращается. */
+  function reassert() {
+    if (!FORCED || !release) return;
+    const o = document.getElementById('vcUpBox');
+    if (!o || !o.classList.contains('show')) openBox();
+  }
+
+  /* вернулись в игру (из свёрнутого окна / другой вкладки) — сразу проверяем
+     версию заново и, если обновление есть, снова показываем окно */
+  function onVisible() {
+    if (!FORCED || !release || document.hidden) return;
+    check(true);
+    reassert();
+  }
+
   function start() {
     injectCss();
     setTimeout(() => check(true), 1500);
     setInterval(() => check(true), CHECK_MS);
     window.addEventListener('vc:update-available', () => check(false));
-    /* пока есть обязательное обновление — окно не должно оставаться скрытым */
-    setInterval(() => {
+    /* окно не должно оставаться скрытым, пока есть обязательное обновление */
+    setInterval(reassert, 5000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    window.addEventListener('pageshow', reassert);
+    /* Esc окно не закрывает */
+    document.addEventListener('keydown', e => {
       if (!FORCED || !release) return;
-      const o = document.getElementById('vcUpBox');
-      if (!o || !o.classList.contains('show')) openBox();
-    }, 20000);
+      if (e.key === 'Escape' || e.keyCode === 27) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
   }
 
   window.VCUpdater = {
