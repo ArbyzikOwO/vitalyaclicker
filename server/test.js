@@ -127,6 +127,18 @@ function authTry(token, version) {
     if (v.can.call) return { act: 'call' };
     return { act: 'fold' };
   };
+  /* Пьяница ручная: каждый вскрывает сам, затем кто-то жмёт «Дальше» */
+  const warGesture = v => {
+    if (!v || v.over) return null;
+    if (v.phase === 'result') return { act: 'next' };
+    return v.canOpen ? { act: 'open' } : null;
+  };
+  const mulberry32 = a => () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 
   console.log('— Регистрация / вход');
   const ra = await post('/api/register', { name: 'Alice', password: 'secret1' });
@@ -304,8 +316,20 @@ function authTry(token, version) {
   ok(pots.length === 2 && pots[0].amount === 1500 && pots[1].amount === 1000, 'покер: побочные банки считаются верно');
 
   console.log('— Карты: Пьяница, Дурак, Верю-не-верю, Покер');
-  const war = await cardMatch('war', [A, B, C2], 20000, null, 1);
-  ok(war.ok && war.g.over, 'пьяница: партия сразу доиграна картами');
+  const wr = mulberry32(4242);
+  const wst = CL.war.make(['A', 'B'], x => Math.floor(wr() * x));
+  ok(wst.pool.length === 2 && wst.phase === 'reveal' && !wst.over, 'пьяница: стол ждёт ручного вскрытия');
+  CL.war.act(wst, wst.pool[0], { act: 'open' });
+  ok(wst.phase === 'reveal' && wst.drawn.length === 1, 'пьяница: одна карта — раунд ещё не решён');
+  ok(!(() => { try { CL.war.act(wst, wst.pool[0], { act: 'open' }); return true; } catch (e) { return false; } })(), 'пьяница: дважды вскрыть нельзя');
+  CL.war.act(wst, wst.pool.filter(i => !wst.opened[i])[0], { act: 'open' });
+  ok(wst.phase === 'result' && wst.last && wst.last.list.length === 2, 'пьяница: после всех карт раунд решён');
+  CL.war.act(wst, 0, { act: 'fast' });
+  ok(wst.over, 'пьяница: «До конца» доигрывает партию');
+  const wpay = CL.war.payouts(wst, 1000);
+  ok(wpay.reduce((a, b) => a + b, 0) === 2000, 'пьяница: выплаты сходятся в банк');
+  const war = await cardMatch('war', [A, B, C2], 20000, warGesture, 400);
+  ok(war.ok && war.g.over, 'пьяница: партия доиграна вручную (' + war.g.log.slice(-1)[0] + ')');
   ok(war.okSum && war.pot === 60000, 'пьяница: банк 60000 и деньги сходятся');
   const durak = await cardMatch('durak', [A, B, C2], 20000, durakGesture, 200);
   ok(durak.ok && durak.g.over, 'дурак: партия доиграна (' + durak.g.log.slice(-1)[0] + ')');

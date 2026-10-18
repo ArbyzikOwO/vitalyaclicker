@@ -657,7 +657,7 @@ const CARDS_EMOJI = { bj: '🃏', durak: '🃏', war: '🃏', cheat: '🤥', pok
 const CARDS_RULES = {
   bj: 'Каждому по 2 карты из общей колоды. По очереди берёте карту или останавливаетесь (60 сек на ход). Кто ближе к 21, но не перебрал, — забирает банк. «Блэкджек» с двух карт сильнее обычных 21. Если перебрали все — ставки возвращаются.',
   durak: 'Подкидной дурак на 2–4 игрока, 36 карт, козырь — нижняя карта колоды. Первый, кто скинул все карты, забирает банк. Подкидывать можно карты того достоинства, что уже на столе; козырь бьёт всё.',
-  war: 'Пьяница: ходов нет, карты решают всё. Каждый раунд все вскрывают верхнюю карту — старшая забирает базар. Кто в итоге собрал все карты, забирает банк.',
+  war: 'Ручная Пьяница: каждый раунд вы сами открываете верхнюю карту — старшая забирает весь базар. Равные карты — спор, базар растёт. Кто собрал все карты, тот победил; если за 50 раундов карты не разошлись — финальная битва: одна карта от каждого, старшая забирает банк.',
   cheat: 'По 5 карт. По кругу выкладываете 1–3 карты рубашкой вверх, объявляя текущее достоинство (A, 2, 3 … K по кругу). Следующий либо верит, либо не верит и вскрывает: соврали — забираете базар, сказали правду — забирает не поверивший. Кто первым скинул все карты — победил.',
   poker: 'Техасский холдем на 2–6 игроков. У каждого свой стек (ставка стола), блайнды, четыре улицы торговли и вскрытие. Побочные банки учтены — фишки не теряются.'
 };
@@ -688,7 +688,9 @@ function cardsTimerBar(g) {
 }
 function cardsHint(g) {
   if (g.over) return 'Раздача окончена. Кнопка ниже вернёт вас к столам.';
-  if (g.game === 'war') return 'Ходов нет — карты уже всё решили.';
+  if (g.game === 'war') return g.canOpen ? 'Нажмите «Открыть карту»: старшая карта забирает весь базар.'
+    : g.phase === 'result' ? 'Раунд разыгран — «Дальше» начнёт следующий.'
+      : 'Ждём, пока соперники откроют свои карты.';
   if (g.game === 'cheat') return g.can.place ? 'Выберите 1–3 карты и нажмите «Положить». Можно блефовать!' : 'Решайте: верить или вскрыть.';
   if (g.game === 'durak') return g.phase === 'defend' ? 'Выберите карту, чтобы отбиться, или возьмите карты.' : 'Выберите карту для атаки/подкидывания или скажите «Бито».';
   if (g.game === 'poker') return g.turn === g.you ? 'Ваш ход: чек, колл, рейз или сброс.' : 'Ждём ход соперника.';
@@ -704,7 +706,12 @@ function cardsResultHtml(g) {
   let extra = '';
   if (g.game === 'bj' && g.results) extra = g.results.map((r, i) => `<span class="ol-duel-ready">${cardsWho(i, g)}: ${r.bust ? 'перебор' : r.total + (r.natural ? ' ✨' : '')}</span>`).join('');
   else if (g.game === 'durak' && g.winner >= 0) extra = `<div class="ol-sub-note">🏆 Кто первым скинул все карты — победил.</div>`;
-  else if (g.game === 'war' && g.winner >= 0) extra = `<div class="ol-sub-note">🏆 ${esc(g.names[g.winner])} собрал(а) все карты.</div>`;
+  else if (g.game === 'war') {
+    const w = (g.winners || []);
+    if (w.length === 1) extra = `<div class="ol-sub-note">🏆 ${esc(g.names[w[0]])} ${g.final ? 'выиграл(а) финальную битву' : 'собрал(а) все карты'}</div>`;
+    else if (w.length > 1) extra = `<div class="ol-sub-note">🤝 Финальная битва — банк делится между ${w.map(i => esc(g.names[i])).join(', ')}</div>`;
+    else extra = '<div class="ol-sub-note">Карты не разошлись — ставки возвращаются</div>';
+  }
   else if (g.game === 'cheat' && g.winner >= 0) extra = `<div class="ol-sub-note">🏆 ${esc(g.names[g.winner])} первым(ой) скинул(а) все карты.</div>`;
   else if (g.game === 'poker' && g.showdown) extra = g.showdown.map(s => `<div class="ol-sub-note">${cardsWho(s.i, g)}: ${esc(s.cards)} — ${esc(s.name)}</div>`).join('');
   const head = g.money && g.money[g.you] > g.stake ? '🏆 Победа! +🪙 ' + F(g.money[g.you] - g.stake)
@@ -726,9 +733,43 @@ function bjTableHtml(g) {
   return cardsTimerBar(g) + act + per;
 }
 function warTableHtml(g) {
-  const rows = g.counts.map((c, i) => `<div class="ol-item"><span class="grow">${cardsPres(i, g)}${cardsWho(i, g)}${g.winner === i ? ' 🏆' : ''}${g.tied && g.tied.indexOf(i) >= 0 ? ' ⚔ спор' : ''}</span><span class="acts">🂠 ${c}</span></div>`).join('');
-  return `<div class="ol-sub-note">Базар: 🂠 ${g.pile} · раундов: ${g.rounds}</div><div class="ol-list">${rows}</div>
-    <div class="ol-cardlog">${(g.log || []).slice().reverse().map(l => '<div class="ol-dim">' + esc(l) + '</div>').join('')}</div>`;
+  const per = Math.max(1, Math.round(36 / g.names.length));
+  const seats = g.names.map((_, i) => {
+    const drawn = (g.drawn || []).filter(d => d.i === i)[0];
+    const isTop = g.phase === 'result' && g.last && (g.last.top || []).indexOf(i) >= 0;
+    const took = g.phase === 'result' && g.last && g.last.took === i;
+    const inPool = (g.pool || []).indexOf(i) >= 0;
+    const slot = drawn
+      ? `<span class="ol-war-slot up${isTop ? ' win' : ''}">${cardHTML(drawn.c)}</span>`
+      : (g.counts[i] ? `<span class="ol-war-slot${inPool && g.phase === 'reveal' ? ' live' : ' dim'}">${cardHTML(null)}</span>` : '<span class="ol-war-slot none">—</span>');
+    const st = !g.counts[i] ? 'вышел из игры'
+      : took ? '🏆 забрал(а) базар'
+        : isTop ? '⭐ старшая карта'
+          : (g.phase === 'result' ? '' : (drawn ? 'открыл(а)' : (inPool ? (i === g.you ? 'ваш ход!' : 'ещё думает…') : 'вне спора')));
+    const pct = Math.max(0, Math.min(100, Math.round(g.counts[i] / per * 100)));
+    return `<div class="ol-war-seat${i === g.you ? ' me' : ''}">
+      <div class="ol-war-name">${cardsPres(i, g)}${cardsWho(i, g)}</div>
+      ${slot}
+      <div class="ol-war-status">${st}</div>
+      <div class="ol-war-bar"><i style="width:${pct}%"></i></div>
+      <div class="ol-war-count">🂠 ${g.counts[i]}</div></div>`;
+  }).join('');
+  const shown = g.phase === 'result' ? g.round : g.round + 1;
+  const head = g.final
+    ? '<b style="color:var(--gold)">🏁 Финальная битва — одна карта решает всё!</b>'
+    : `Раунд <b>${Math.min(shown, g.maxRounds)}</b> из ${g.maxRounds} · базар 🂠 <b>${g.pile}</b>` +
+      (g.tied.length && !g.over ? ' · спорят: ' + g.tied.map(i => esc(g.names[i])).join(', ') : '');
+  let act = '';
+  if (!g.over) {
+    if (g.canOpen) act = '<button class="ol-btn green" data-act="cards-open" style="flex:1">🃏 Открыть карту</button>';
+    else if (g.phase === 'reveal') act = '<button class="ol-btn" disabled style="flex:1">⏳ Ждём карты соперников…</button>';
+    else act = '<button class="ol-btn green" data-act="cards-next" style="flex:1">▶ Дальше</button>';
+    act += '<button class="ol-btn sec" data-act="cards-fast">⚡ До конца</button>';
+  }
+  return `<div class="ol-sub-note" style="text-align:center">${head}</div>
+    <div class="ol-war-table">${seats}</div>
+    ${act ? '<div class="ol-row nowrap" style="margin-top:8px">' + act + '</div>' : ''}
+    <div class="ol-cardlog">${(g.log || []).slice(-14).reverse().map(l => '<div class="ol-dim">' + esc(l) + '</div>').join('')}</div>`;
 }
 function cheatTableHtml(g) {
   const hand = g.hand.map((c, i) => `<span class="ol-pick${cards.pick.indexOf(i) >= 0 ? ' on' : ''}" data-act="cards-sel" data-i="${i}">${cardHTML(c)}</span>`).join('');
@@ -1740,6 +1781,9 @@ function onClick(e) {
       renderCards(); return; }
     case 'cards-hit': return cardsAct({ act: 'hit' });
     case 'cards-stand': return cardsAct({ act: 'stand' });
+    case 'cards-open': return cardsAct({ act: 'open' });
+    case 'cards-next': return cardsAct({ act: 'next' });
+    case 'cards-fast': return cardsAct({ act: 'fast' });
     case 'cards-play': return cards.pick.length ? cardsAct({ act: 'play', cards: cards.pick.slice() }) : T('Выберите 1–3 карты');
     case 'cards-believe': return cardsAct({ act: 'believe' });
     case 'cards-doubt': return cardsAct({ act: 'doubt' });

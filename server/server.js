@@ -575,8 +575,9 @@ function cardArmTurn(rm) {
   clearTimeout(rm.timer); rm.timer = null;
   const i = rm.mod.turn(rm.g);
   if (i < 0) return;
-  rm.deadline = now() + CARD_TURN_MS;
-  rm.timer = setTimeout(() => { if (rm.state === 'play') { cardAuto(rm); cardAfter(rm); } }, CARD_TURN_MS + 200);
+  const ms = rm.mod.delay ? rm.mod.delay(rm.g, CARD_TURN_MS) : CARD_TURN_MS;
+  rm.deadline = now() + ms;
+  rm.timer = setTimeout(() => { if (rm.state === 'play') { cardAuto(rm); cardAfter(rm); } }, ms + 200);
   if (rm.timer.unref) rm.timer.unref();
 }
 function cardAuto(rm) {
@@ -592,6 +593,9 @@ function cardAuto(rm) {
       if (v.can.hit && v.total < 17) rm.mod.act(st, i, { act: 'hit' }); else rm.mod.act(st, i, { act: 'stand' });
     } else if (rm.game === 'cheat') {
       if (v.phase === 'place') rm.mod.act(st, i, { act: 'play', cards: [0] }); else rm.mod.act(st, i, { act: 'believe' });
+    } else if (rm.game === 'war') {
+      if (v.phase === 'reveal' && v.canOpen) rm.mod.act(st, i, { act: 'open' });
+      else if (v.phase === 'result') rm.mod.act(st, i, { act: 'next' });
     } else if (rm.game === 'durak') {
       if (v.phase === 'defend') rm.mod.act(st, i, { act: 'take' });
       else if (v.can.pass) rm.mod.act(st, i, { act: 'pass' });

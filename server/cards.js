@@ -28,75 +28,175 @@ function shuffle(a, rnd) { for (let i = a.length - 1; i > 0; i--) { const j = rn
 function pushLog(st, text) { st.log.push(text); if (st.log.length > 60) st.log.splice(0, st.log.length - 60); }
 
 /* ============================================================
-   Пьяница — 2–4 игрока
-   Каждый раунд все вскрывают верхнюю карту, старшая забирает
-   весь базар. Равные старшие карты спорят дальше, пока не
-   останется один. Побеждает тот, кто собрал все карты.
+   Пьяница — 2–4 игрока, ручная
+   Раунд за раундом игроки сами открывают верхнюю карту; старшая
+   забирает весь базар. Равные старшие карты спорят дальше, пока
+   не останется один. Побеждает тот, кто собрал все карты. Если за
+   WAR_MAX_ROUNDS раундов карты не разошлись — финальная битва:
+   по одной карте от каждого, старшая забирает банк.
    ============================================================ */
-function warStep(st) {
-  if (st.over) return;
-  const alive = [];
-  for (let i = 0; i < st.n; i++) if (st.hands[i].length) alive.push(i);
-  if (alive.length <= 1) { st.over = true; st.winner = alive.length ? alive[0] : -1; return; }
-  let pool = st.tied.length ? st.tied.filter(i => st.hands[i].length) : alive;
+const WAR_MAX_ROUNDS = 50;
+
+function warAlive(st) {
+  const a = [];
+  for (let i = 0; i < st.n; i++) if (st.hands[i].length) a.push(i);
+  return a;
+}
+/* кто обязан открыть карту в этом раунде: спорщики, а если их нет — все живые */
+function warPool(st) {
+  const alive = warAlive(st);
+  if (alive.length <= 1) return alive;
+  let pool = st.tied.filter(i => st.hands[i].length);
   if (!pool.length) { pool = alive; st.tied = []; }
-  if (pool.length === 1) {
-    const w = pool[0];
-    st.hands[w].push.apply(st.hands[w], st.pile);
-    pushLog(st, st.names[w] + ' забирает базар (' + st.pile.length + ' карт)');
-    st.pile = []; st.tied = [];
-    return;
+  return pool;
+}
+function warTakePile(st, i) {
+  if (!st.pile.length) return;
+  st.hands[i].push.apply(st.hands[i], st.pile);
+  pushLog(st, st.names[i] + ' забирает базар (' + st.pile.length + ' карт)');
+  st.pile = []; st.tied = [];
+}
+function warCard(c) { return c.r + c.s; }
+/* начать новый раунд (или финальную битву, или закончить игру) */
+function warBegin(st) {
+  st.drawn = []; st.opened = st.names.map(() => false); st.last = null; st.phase = 'reveal';
+  if (st.rounds >= WAR_MAX_ROUNDS) { st.final = true; st.pool = warAlive(st); return; }
+  st.final = false;
+  let guard = 0;
+  for (;;) {
+    const alive = warAlive(st);
+    if (alive.length <= 1) {
+      if (alive.length === 1) { warTakePile(st, alive[0]); pushLog(st, '🏆 ' + st.names[alive[0]] + ' собрал(а) все карты'); }
+      st.over = true; st.winners = alive; st.phase = 'result'; st.pool = alive;
+      return;
+    }
+    st.pool = warPool(st);
+    if (st.pool.length > 1) return;
+    warTakePile(st, st.pool[0]);          /* единственный претендент забирает базар */
+    if (guard++ > 4) return;
   }
-  const drawn = pool.map(i => ({ i: i, c: st.hands[i].pop() }));
-  st.pile.push.apply(st.pile, drawn.map(d => d.c));
+}
+function warDraw(st, i) {
+  const c = st.hands[i].pop();
+  st.drawn.push({ i: i, c: c });
+  st.pile.push(c);
+  st.opened[i] = true;
+}
+function warResolve(st) {
+  const best = Math.max.apply(null, st.drawn.map(d => V(d.c.r)));
+  const top = st.drawn.filter(d => V(d.c.r) === best).map(d => d.i);
+  const list = st.drawn.map(d => ({ i: d.i, c: d.c }));
   st.rounds++;
-  let best = -1;
-  for (const d of drawn) best = Math.max(best, V(d.c.r));
-  const top = drawn.filter(d => V(d.c.r) === best).map(d => d.i);
-  if (top.length === 1) {
+  if (st.final) {
+    st.over = true; st.winners = top.slice(); st.phase = 'result';
+    pushLog(st, '🏁 Финальная битва: ' + list.map(d => st.names[d.i] + ' ' + warCard(d.c)).join(', ') +
+      (top.length > 1 ? ' — ничья, банк делится между ' + top.map(i => st.names[i]).join(', ')
+        : ' — банк забирает ' + st.names[top[0]]));
+  } else if (top.length === 1) {
     const w = top[0];
-    st.hands[w].push.apply(st.hands[w], st.pile);
-    pushLog(st, 'Раунд ' + st.rounds + ': ' + drawn.map(d => st.names[d.i] + ' ' + d.c.r + d.c.s).join(', ') + ' — забирает ' + st.names[w]);
-    st.pile = []; st.tied = [];
+    pushLog(st, 'Раунд ' + st.rounds + ': ' + list.map(d => st.names[d.i] + ' ' + warCard(d.c)).join(', ') + ' — забирает ' + st.names[w]);
+    warTakePile(st, w);
+    st.phase = 'result';
   } else {
-    st.tied = top;
+    st.tied = top.slice();
+    st.phase = 'result';
     pushLog(st, 'Раунд ' + st.rounds + ': спор ' + top.map(i => st.names[i]).join(', ') + ' — базар растёт (' + st.pile.length + ' карт)');
   }
-  const now = [];
-  for (let i = 0; i < st.n; i++) if (st.hands[i].length) now.push(i);
-  if (now.length <= 1) { st.over = true; st.winner = now.length ? now[0] : -1; return; }
-  if (st.rounds >= 300) {
-    st.over = true;
-    let bi = -1;
-    for (let i = 0; i < st.n; i++) if (bi < 0 || st.hands[i].length > st.hands[bi].length) bi = i;
-    let tie = false;
-    for (let i = 0; i < st.n; i++) if (i !== bi && st.hands[i].length === st.hands[bi].length) tie = true;
-    st.winner = tie ? -1 : bi;
-    pushLog(st, 'Слишком долго — побеждает тот, у кого больше карт');
+  st.last = {
+    list: list, top: top.slice(), tie: top.length > 1 && !st.final, final: !!st.final,
+    took: (!st.final && top.length === 1) ? top[0] : -1, pile: st.pile.length
+  };
+  if (st.over) return;
+  const alive = warAlive(st);
+  if (alive.length <= 1) {
+    if (alive.length === 1) { warTakePile(st, alive[0]); pushLog(st, '🏆 ' + st.names[alive[0]] + ' собрал(а) все карты'); }
+    st.over = true; st.winners = alive;
   }
 }
 const war = {
-  key: 'war', title: 'Пьяница', min: 2, max: 4, auto: true,
+  key: 'war', title: 'Пьяница', min: 2, max: 4, auto: false,
   make(names, rnd) {
-    const st = { n: names.length, names: names.slice(), hands: names.map(() => []), pile: [], tied: [], rounds: 0, log: [], over: false, winner: -1 };
+    const st = {
+      n: names.length, names: names.slice(), hands: names.map(() => []),
+      pile: [], tied: [], drawn: [], opened: names.map(() => false), pool: [],
+      rounds: 0, phase: 'reveal', final: false, last: null,
+      over: false, winners: [], log: []
+    };
     const d = shuffle(deck36(), rnd);
     d.forEach((c, i) => st.hands[i % st.n].push(c));
     pushLog(st, 'Карты сданы: по ' + st.hands[0].length + ' каждому');
-    let guard = 0;
-    while (!st.over && guard++ < 2000) warStep(st);
-    if (!st.over) { st.over = true; st.winner = -1; }
+    pushLog(st, 'Открывайте верхнюю карту — старшая забирает весь базар');
+    warBegin(st);
     return st;
   },
-  view(st) {
-    return { game: 'war', counts: st.hands.map(h => h.length), pile: st.pile.length, tied: st.tied.slice(), rounds: st.rounds, log: st.log.slice(-24), over: st.over, winner: st.winner };
+  view(st, i) {
+    return {
+      game: 'war', phase: st.phase, final: !!st.final,
+      round: st.rounds, maxRounds: WAR_MAX_ROUNDS,
+      counts: st.hands.map(h => h.length),
+      pile: st.pile.length, tied: st.tied.slice(),
+      drawn: st.drawn.map(d => ({ i: d.i, c: d.c })),
+      opened: st.opened.slice(), pool: st.pool.slice(), last: st.last,
+      canOpen: !st.over && st.phase === 'reveal' && st.pool.indexOf(i) >= 0 && !st.opened[i] && !!(st.hands[i] && st.hands[i].length),
+      canNext: !st.over && st.phase === 'result',
+      canFast: !st.over,
+      over: st.over, winner: (st.winners && st.winners.length === 1) ? st.winners[0] : -1,
+      winners: (st.winners || []).slice(), log: st.log.slice(-40)
+    };
   },
-  act() { throw new Error('В «Пьянице» ходов нет — карты решают всё'); },
+  act(st, i, m) {
+    if (st.over) throw new Error('Партия уже закончена');
+    const act = m && m.act;
+    if (act === 'open') {
+      if (st.phase !== 'reveal') throw new Error('Сейчас не время открывать карты');
+      if (st.opened[i]) throw new Error('Вы уже открыли карту');
+      if (st.pool.indexOf(i) < 0) throw new Error('Вы не участвуете в этом раунде');
+      if (!st.hands[i].length) throw new Error('У вас нет карт');
+      warDraw(st, i);
+      if (st.drawn.length >= st.pool.length) warResolve(st);
+      return;
+    }
+    if (act === 'next') {
+      if (st.phase !== 'result') throw new Error('Раунд ещё не разыгран');
+      warBegin(st);
+      return;
+    }
+    if (act === 'fast') {                     /* доиграть всё разом */
+      let guard = 0;
+      while (!st.over && guard++ < 5000) {
+        if (st.phase === 'reveal') {
+          const k = st.pool.filter(x => !st.opened[x] && st.hands[x].length)[0];
+          if (k == null) break;
+          warDraw(st, k);
+          if (st.drawn.length >= st.pool.length) warResolve(st);
+        } else warBegin(st);
+      }
+      st.phase = 'result';
+      if (!st.over) { st.over = true; st.winners = []; }
+      return;
+    }
+    throw new Error('Неизвестное действие');
+  },
   done(st) { return st.over; },
-  turn() { return -1; },
+  turn(st) {
+    if (st.over) return -1;
+    if (st.phase === 'result') return st.last && st.last.took >= 0 ? st.last.took : (st.pool[0] != null ? st.pool[0] : 0);
+    const k = st.pool.filter(i => !st.opened[i] && st.hands[i].length)[0];
+    return k == null ? -1 : k;
+  },
+  /* итог показываем всем, а дальше раунд идёт сам — иначе никто не нажмёт «Дальше» */
+  delay(st, def) { return st.phase === 'result' ? 4000 : def; },
   payouts(st, bet) {
     const out = st.names.map(() => 0);
-    if (st.winner >= 0) out[st.winner] = bet * st.n;
-    else for (let i = 0; i < st.n; i++) out[i] = bet;   /* ничья — возврат */
+    const w = (st.winners || []).filter(i => i >= 0 && i < st.n);
+    if (w.length === 1) { out[w[0]] = bet * st.n; return out; }
+    if (w.length > 1) {
+      const total = bet * st.n, base = Math.floor(total / w.length);
+      let rem = total - base * w.length;
+      for (const i of w) { out[i] = base + (rem > 0 ? 1 : 0); if (rem > 0) rem--; }
+      return out;
+    }
+    for (let i = 0; i < st.n; i++) out[i] = bet;   /* ничья/тупик — возврат */
     return out;
   }
 };
