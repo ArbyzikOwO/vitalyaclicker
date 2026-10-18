@@ -266,6 +266,13 @@
   @supports (-moz-appearance:none){*{scrollbar-width:thin;scrollbar-color:#3b4864 #0e121a}}
 </style>
 <link rel="stylesheet" href="online.css">
+<!-- Сайтовая (браузерная) версия: адрес онлайн-сервера ищется в server.txt
+     репозитория, а обновления браузеру не предлагаются — файлы ему всегда
+     отдаёт хостинг свежими. Сборки EXE/APK перезаписывают эти значения. -->
+<script>
+window.VC_REPO = window.VC_REPO || 'ArbyzikOwO/vitalyaclicker';
+window.VC_PLATFORM = window.VC_PLATFORM || 'web';
+</script>
 </head>
 <body>
 

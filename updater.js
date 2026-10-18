@@ -31,6 +31,10 @@
      пока игрок не обновятся. В обычном браузере (web) принуждать не нужно —
      страницу всегда отдаёт сам сервер с актуальными файлами. */
   const FORCED = PLATFORM === 'win' || PLATFORM === 'android' || PLATFORM === 'linux';
+  /* браузер (сайтовая версия): файлы всегда отдаёт хостинг свежими,
+     поэтому ни окна, ни баннера об обновлении здесь быть не должно —
+     иначе браузеру предлагали бы скачать EXE/APK и блокировали игру. */
+  const WEB = PLATFORM === 'web';
   const REL_URL = REPO ? 'https://github.com/' + REPO + '/releases/latest' : '';
 
   let release = null;   // { version, tag_name, notes, download, assetName }
@@ -164,6 +168,7 @@
       if (!silent) toast('⚠️ Репозиторий обновлений не настроен');
       return null;
     }
+    if (WEB) return null;   /* в браузере обновляться нечем: страницу отдаёт хостинг */
     try {
       const j = await fetchVersionInfo();
       if (!j) { if (!silent) toast('⚠️ Не удалось проверить обновления'); return null; }
@@ -225,6 +230,7 @@
 
   /* принудительное обновление по требованию сервера (клиент устарел) */
   function force(info) {
+    if (WEB) return false;   /* в браузере не блокируем игру — обновлять нечего */
     info = info || {};
     const ver = String(info.version || '').trim().replace(/^v/i, '');
     if (!ver || cmpVer(ver, LOCAL) <= 0) return false;
