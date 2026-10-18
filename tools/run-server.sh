@@ -4,14 +4,17 @@
 #
 #  Что делает:
 #    1) запускает игровой сервер (node server/server.js);
-#    2) поднимает туннель: cloudflared tunnel --url http://127.0.0.1:<порт>;
-#    3) вытаскивает публичный адрес и пишет его в tools/server.txt;
-#    4) если заданы GITHUB_REPO и GH_TOKEN — публикует server.txt в репозиторий;
-#    5) каждые N часов (по умолчанию 6) перезапускает туннель и обновляет адрес.
+#    2) запускает автообновление (tools/auto-update.sh): оно само подтягивает
+#       свежий код из GitHub и перезапускает сервер, когда менялся серверный код;
+#    3) поднимает туннель: cloudflared tunnel --url http://127.0.0.1:<порт>;
+#    4) вытаскивает публичный адрес и пишет его в tools/server.txt;
+#    5) если заданы GITHUB_REPO и GH_TOKEN — публикует server.txt в репозиторий;
+#    6) каждые N часов (по умолчанию 6) перезапускает туннель и обновляет адрес.
 #
 #  Запуск:  chmod +x tools/run-server.sh && tools/run-server.sh
 #  Переменные: PORT=3000 RESTART_HOURS=6 PUBLISH=1 GITHUB_REPO=user/repo GH_TOKEN=...
 #              CLOUDFLARED=/путь/к/cloudflared  NOTUNNEL=1
+#              NOUPDATE=1 (не запускать автообновление)  UPDATE_INTERVAL=120 (сек)
 # =====================================================================
 set -uo pipefail
 
@@ -19,6 +22,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$DIR")"
 PORT="${PORT:-3000}"
 RESTART_HOURS="${RESTART_HOURS:-6}"
+NOUPDATE="${NOUPDATE:-0}"
+UPDATE_INTERVAL="${UPDATE_INTERVAL:-120}"
 LOG_DIR="$DIR/logs"
 SERVER_TXT="$DIR/server.txt"
 mkdir -p "$LOG_DIR"
@@ -76,13 +81,35 @@ publish_server_txt() {
   fi
 }
 
-NODE_PID=""; CF_PID=""; STOPPED=0
+# Автообновление сервера: отдельный процесс, который сам делает git pull и
+# перезапускает сервер, если менялся серверный код (см. tools/auto-update.sh).
+start_updater() {
+  if [ "$NOUPDATE" = 1 ]; then log 'автообновление отключено (NOUPDATE=1)'; return 0; fi
+  local upd="$DIR/auto-update.sh"
+  if [ ! -f "$upd" ]; then log 'автообновление: не найден tools/auto-update.sh — пропускаю'; return 0; fi
+  [ -x "$upd" ] || chmod +x "$upd" 2>/dev/null
+  log "запускаю автообновление (проверка каждые ${UPDATE_INTERVAL}с)"
+  PORT="$PORT" NODE_BIN="$NODE_BIN" INTERVAL="$UPDATE_INTERVAL" \
+    nohup "$upd" </dev/null >/dev/null 2>>"$LOG_DIR/auto-update.err.log" &
+  UPD_PID=$!
+  sleep 0.3
+  if kill -0 "$UPD_PID" 2>/dev/null; then
+    log "автообновление работает (pid $UPD_PID), лог: tools/logs/auto-update.log"
+  else
+    UPD_PID=""
+    log 'автообновление не запустилось — смотрите tools/logs/auto-update.err.log'
+  fi
+}
+
+NODE_PID=""; CF_PID=""; UPD_PID=""; STOPPED=0
 cleanup() {
   [ "$STOPPED" = 1 ] && return 0
   STOPPED=1
   log 'останавливаю...'
+  # сначала автообновление, чтобы оно не подняло сервер обратно
+  [ -n "$UPD_PID" ] && kill "$UPD_PID" 2>/dev/null
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null
-  # pid берём из файла: сервер мог быть перезапущен автообновлением (tools/auto-update.sh)
+  # pid сервера берём из файла: его мог перезапустить автоапдейт
   local np="${NODE_PID:-}"
   [ -f "$LOG_DIR/server.pid" ] && np="$(cat "$LOG_DIR/server.pid" 2>/dev/null || echo "$np")"
   [ -n "$np" ] && kill "$np" 2>/dev/null
@@ -110,6 +137,8 @@ if [ "$ready" != 1 ]; then
   exit 1
 fi
 log "сервер работает: http://127.0.0.1:$PORT"
+
+start_updater
 
 if [ "${NOTUNNEL:-0}" = 1 ]; then
   log 'туннель отключён (NOTUNNEL=1): игра доступна только локально'

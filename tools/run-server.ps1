@@ -3,22 +3,29 @@
 #
 #  Что делает:
 #    1) запускает игровой сервер (node server/server.js);
-#    2) поднимает туннель: cloudflared tunnel --url http://127.0.0.1:<порт>;
-#    3) вытаскивает публичный адрес и пишет его в tools\server.txt;
-#    4) если заданы GITHUB_REPO и GH_TOKEN — публикует server.txt в репозиторий;
-#    5) каждые N часов (по умолчанию 6) перезапускает туннель и обновляет адрес.
+#    2) запускает автообновление (tools/auto-update.sh через Git Bash): оно само
+#       подтягивает свежий код из GitHub и перезапускает сервер, когда менялся
+#       серверный код;
+#    3) поднимает туннель: cloudflared tunnel --url http://127.0.0.1:<порт>;
+#    4) вытаскивает публичный адрес и пишет его в tools\server.txt;
+#    5) если заданы GITHUB_REPO и GH_TOKEN — публикует server.txt в репозиторий;
+#    6) каждые N часов (по умолчанию 6) перезапускает туннель и обновляет адрес.
 #
 #  Запуск:  run-server.cmd            (или напрямую этот файл в PowerShell)
-#  Параметры: -Port 3000 -RestartHours 6 -NoTunnel -NoPublish
+#  Параметры: -Port 3000 -RestartHours 6 -UpdateInterval 120
+#             -NoTunnel -NoPublish -NoUpdate
 #  server.txt публикуется в GitHub, если заданы токен и репозиторий
 #  (см. tools\gh.config.json). Отключить: -NoPublish
+#  Автообновление требует Git Bash (git и bash). Отключить: -NoUpdate
 # =====================================================================
 param(
   [int]$Port = 3000,
   [int]$RestartHours = 6,
+  [int]$UpdateInterval = 120,
   [string]$Cloudflared = "",
   [switch]$NoTunnel,
-  [switch]$NoPublish
+  [switch]$NoPublish,
+  [switch]$NoUpdate
 )
 
 $ErrorActionPreference = 'Continue'
@@ -32,6 +39,9 @@ $srvOut    = Join-Path $logDir 'server.log'
 $srvErr    = Join-Path $logDir 'server.err.log'
 $cfOut     = Join-Path $logDir 'cloudflared.log'
 $cfErr     = Join-Path $logDir 'cloudflared.err.log'
+$updOut    = Join-Path $logDir 'auto-update.out.log'
+$updErr    = Join-Path $logDir 'auto-update.err.log'
+$srvPid    = Join-Path $logDir 'server.pid'
 
 New-Item -ItemType Directory -Force $logDir | Out-Null
 
@@ -44,6 +54,17 @@ function Find-Node {
     if (Test-Path $p) { return $p }
   }
   throw 'Node.js не найден. Установите Node или добавьте его в PATH.'
+}
+
+function Find-Bash {
+  $c = Get-Command bash -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  foreach ($p in @("$env:ProgramFiles\Git\bin\bash.exe",
+                   "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
+                   "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe")) {
+    if ($p -and (Test-Path $p)) { return $p }
+  }
+  return $null
 }
 
 function Find-Cloudflared {
@@ -109,6 +130,8 @@ Log 'запускаю игровой сервер...'
 $env:PORT = "$Port"
 $nodeProc = Start-Process -FilePath $node -ArgumentList 'server/server.js' -WorkingDirectory $root -PassThru `
   -RedirectStandardOutput $srvOut -RedirectStandardError $srvErr -WindowStyle Hidden
+# pid-файл нужен автообновлению, чтобы перезапускать именно этот сервер
+Set-Content -Path $srvPid -Value $nodeProc.Id -Encoding ASCII
 
 if (-not (Wait-Http "http://127.0.0.1:$Port/api/ping" 30)) {
   Log 'сервер не ответил за 30 секунд — смотрите tools\logs\server.err.log'
@@ -116,6 +139,33 @@ if (-not (Wait-Http "http://127.0.0.1:$Port/api/ping" 30)) {
   exit 1
 }
 Log "сервер работает: http://127.0.0.1:$Port"
+
+# --- автообновление: тянет свежий код из GitHub и перезапускает сервер ---
+$updProc = $null
+if ($NoUpdate) {
+  Log 'автообновление отключено (-NoUpdate)'
+} else {
+  $updScript = Join-Path $toolsDir 'auto-update.sh'
+  $bash = Find-Bash
+  if (-not $bash) {
+    Log 'автообновление: Git Bash не найден — пропускаю (поставьте Git for Windows)'
+  } elseif (-not (Test-Path $updScript)) {
+    Log 'автообновление: не найден tools\auto-update.sh — пропускаю'
+  } else {
+    $env:NODE_BIN = $node
+    $env:INTERVAL = "$UpdateInterval"
+    Log "запускаю автообновление (проверка каждые $UpdateInterval с)"
+    $updProc = Start-Process -FilePath $bash -ArgumentList @('tools/auto-update.sh') -WorkingDirectory $root `
+      -PassThru -WindowStyle Hidden -RedirectStandardOutput $updOut -RedirectStandardError $updErr
+    Start-Sleep -Milliseconds 700
+    if ($updProc.HasExited) {
+      Log 'автообновление не запустилось — смотрите tools\logs\auto-update.err.log'
+      $updProc = $null
+    } else {
+      Log "автообновление работает (pid $($updProc.Id)), лог: tools\logs\auto-update.log"
+    }
+  }
+}
 
 $tunnelProc = $null
 try {
@@ -168,6 +218,12 @@ try {
   }
 } finally {
   Log 'останавливаю...'
+  # сначала автообновление, чтобы оно не подняло сервер обратно
+  Stop-Quiet $updProc
   Stop-Quiet $tunnelProc
+  # pid сервера берём из файла: его мог перезапустить автоапдейт
+  $npId = 0
+  try { $npId = [int](Get-Content $srvPid -ErrorAction Stop | Select-Object -First 1) } catch { $npId = 0 }
+  if ($npId -gt 0 -and $npId -ne $nodeProc.Id) { Stop-Quiet (Get-Process -Id $npId -ErrorAction SilentlyContinue) }
   Stop-Quiet $nodeProc
 }
