@@ -1,7 +1,7 @@
 {
-  "version": "1.0.9",
-  "released": "2026-10-18T14:05:38.344Z",
-  "notes": "Фикс главы китайской мафии + Новая иконка игры",
+  "version": "1.1.0",
+  "released": "2026-10-18T15:07:54.861Z",
+  "notes": "Исправлены обновления",
   "assets": {
     "win": "VitalyaClicker.exe",
     "android": "VitalyaClicker.apk"
