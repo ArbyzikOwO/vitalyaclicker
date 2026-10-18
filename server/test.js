@@ -1,0 +1,423 @@
+'use strict';
+/* Сквозной тест сервера: node test.js */
+const os = require('os'), fs = require('fs'), path = require('path');
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vc-test-'));
+process.env.ADMIN_CODE = 'test-admin-code-' + process.pid;   /* код админки: только для тестов */
+const ADMIN_CODE = process.env.ADMIN_CODE;
+const WebSocket = require('ws');
+const ReleasePlan = require('./release-plan.js');
+const { server } = require('./server.js');
+
+let pass = 0, fail = 0;
+const ok = (c, msg) => { if (c) { pass++; console.log('  ✓', msg); } else { fail++; console.log('  ✗ FAIL:', msg); } };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
+function makeSave(click) {
+  const b = Buffer.alloc(120);
+  b.writeUInt32LE(0x56434442, 0); b.writeUInt32LE(24, 4);
+  const v = { click, auto: 0, casino: 0, crypto: 0, mining: 0 };
+  const s = Object.keys(v).sort().map(k => k + ':' + Math.floor(v[k])).join('|');
+  b.writeUInt32LE(fnv(s), 8);
+  ['click', 'auto', 'casino', 'crypto', 'mining'].forEach((k, i) => b.writeDoubleLE(v[k], 12 + i * 8));
+  return b.toString('base64');
+}
+
+let port;
+async function post(p, body) {
+  const r = await fetch(`http://127.0.0.1:${port}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+function client(token) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const c = { ws, pushes: [], pend: new Map(), seq: 1 };
+    ws.on('message', d => { const m = JSON.parse(d); if (m.re != null) { const p = c.pend.get(m.re); if (p) { c.pend.delete(m.re); p(m); } } else c.pushes.push(m); });
+    c.req = (t, o = {}) => new Promise((res, rej) => { const id = c.seq++; c.pend.set(id, res); setTimeout(() => { if (c.pend.has(id)) rej(new Error('нет ответа на ' + t)); }, 4000); ws.send(JSON.stringify(Object.assign({ id, t }, o))); });
+    c.last = t => [...c.pushes].reverse().find(p => p.t === t);
+    ws.on('open', async () => { const r = await c.req('auth', { token }); r.ok ? resolve(c) : reject(new Error('auth failed ' + JSON.stringify(r))); });
+    ws.on('error', reject);
+  });
+}
+
+(async () => {
+  await new Promise(r => server.listen(0, r)); port = server.address().port;
+
+  console.log('— Регистрация / вход');
+  const ra = await post('/api/register', { name: 'Alice', password: 'secret1' });
+  const rb = await post('/api/register', { name: 'Bob', password: 'secret2' });
+  const rc = await post('/api/register', { name: 'Carol', password: 'secret3' });
+  ok(ra.ok && rb.ok && rc.ok, 'три аккаунта зарегистрированы');
+  ok(!(await post('/api/register', { name: 'alice', password: 'whatever1' })).ok, 'ник занят без учёта регистра');
+  ok(!(await post('/api/login', { name: 'Alice', password: 'wrong' })).ok, 'неверный пароль отклонён');
+  const A = await client(ra.token), B = await client(rb.token), C = await client(rc.token);
+
+  console.log('— Облачное сохранение');
+  let r = await A.req('save.put', { main: makeSave(1e9), garden: JSON.stringify({ money: 5e8 }), baseRev: 0 });
+  ok(r.ok && r.rev === 1 && r.avail === 1.5e9, 'save.put принят, баланс = клик + сад (1.5e9)');
+  r = await A.req('save.put', { main: makeSave(1e9), baseRev: 0 });
+  ok(!r.ok && r.err === 'conflict', 'устаревший baseRev → конфликт');
+  const bad = Buffer.from(makeSave(1e9), 'base64'); bad.writeUInt32LE(12345, 8);
+  r = await A.req('save.put', { main: bad.toString('base64'), baseRev: 1 });
+  ok(!r.ok, 'подделанная контрольная сумма отклонена: ' + r.err);
+  r = await A.req('save.get'); ok(r.ok && r.rev === 1 && r.main, 'save.get возвращает сохранение');
+  await B.req('save.put', { main: makeSave(1e9), baseRev: 0 });
+  await C.req('save.put', { main: makeSave(5e3), baseRev: 0 });
+
+  console.log('— Перевод с комиссией');
+  r = await A.req('transfer', { to: 'Bob', amount: 100000 });
+  ok(r.ok && r.amount === 100000 && r.fee === 5000 && r.total === 105000, 'перевод 100000 → комиссия 5000, списано 105000');
+  r = await B.req('wallet.pending');
+  ok(r.items.length === 1 && r.items[0].kind === 'credit' && r.items[0].amount === 100000, 'Bob получил 100000 в ожидании');
+  await B.req('wallet.ack', { ids: r.items.map(i => i.id) });
+  r = await A.req('wallet.pending');
+  ok(r.items[0].kind === 'debit' && r.items[0].amount === 105000, 'Alice: ожидает списание 105000');
+  ok(!(await A.req('transfer', { to: 'Alice', amount: 5000 })).ok, 'перевод самому себе запрещён');
+  ok(!(await C.req('transfer', { to: 'Bob', amount: 1e9 })).ok, 'перевод больше облачного баланса запрещён');
+  ok(!(await A.req('transfer', { to: 'Bob', amount: 10 })).ok, 'перевод ниже минимума запрещён');
+  await A.req('wallet.ack', { ids: r.items.map(i => i.id) });
+
+  console.log('— Друзья и чат');
+  r = await A.req('friends.add', { name: 'Bob' }); ok(r.ok && r.outgoing.length === 1, 'заявка отправлена');
+  ok(B.last('friends.update'), 'Bob получил уведомление о заявке');
+  r = await B.req('friends.accept', { name: 'Alice' }); ok(r.ok && r.friends.length === 1, 'заявка принята');
+  r = await A.req('friends.list'); ok(r.friends[0].name === 'Bob' && r.friends[0].online, 'Bob в друзьях и онлайн');
+  r = await A.req('chat.send', { text: 'Привет <b>всем</b>' }); ok(r.ok, 'сообщение в общий чат');
+  await sleep(80); ok(B.last('chat.msg') && C.last('chat.msg'), 'все получили сообщение');
+  r = await A.req('chat.send', { to: 'Bob', text: 'личка' }); await sleep(80); ok(r.ok && B.last('chat.dm'), 'личное сообщение другу доставлено');
+  r = await A.req('chat.send', { to: 'Carol', text: 'личка' }); ok(!r.ok, 'ЛС не-другу запрещено');
+  r = await B.req('chat.history', { with: 'Alice' }); ok(r.msgs.length === 1, 'история ЛС');
+
+  console.log('— Админка');
+  r = await B.req('admin.code', { code: 'wrong' }); ok(!r.ok && r.err === 'bad', 'неверный код не даёт админку');
+  r = await B.req('admin.users'); ok(!r.ok, 'без прав админ-команды недоступны');
+  r = await A.req('admin.code', { code: ADMIN_CODE }); ok(r.ok && r.admin && r.owner, 'секретный код выдаёт админку (первому — овнерку)');
+  r = await A.req('admin.users'); ok(r.ok && r.users.length === 3 && r.online === 3, 'admin.users работает');
+  r = await A.req('admin.give', { name: 'Carol', amount: 777000 }); ok(r.ok, 'выдача денег');
+  r = await C.req('wallet.pending'); ok(r.items.some(i => i.amount === 777000 && i.kind === 'credit'), 'Carol получила 777000');
+  await C.req('wallet.ack', { ids: r.items.map(i => i.id) });
+  r = await A.req('admin.mute', { name: 'Carol', minutes: 5 }); ok(r.ok, 'мут');
+  r = await C.req('chat.send', { text: 'я заглушена' }); ok(!r.ok, 'заглушенный не может писать');
+  await A.req('admin.unmute', { name: 'Carol' });
+  const msgs = (await A.req('chat.history', {})).msgs;
+  r = await A.req('admin.delmsg', { msgId: msgs[0].id }); await sleep(80); ok(r.ok && B.last('chat.del'), 'удаление сообщения чата');
+  await A.req('admin.broadcast', { text: 'Тест!' }); await sleep(80); ok(B.last('announce'), 'объявление дошло');
+  r = await A.req('admin.ban', { name: 'Carol', minutes: 0, reason: 'тест' }); ok(r.ok, 'бан');
+  await sleep(100);
+  ok(!(await post('/api/login', { name: 'Carol', password: 'secret3' })).ok, 'забаненный не может войти');
+  r = await A.req('admin.unban', { name: 'Carol' });
+  ok((await post('/api/login', { name: 'Carol', password: 'secret3' })).ok, 'после разбана вход работает');
+  ok(!(await A.req('admin.ban', { name: 'Alice' })).ok, 'нельзя применить бан к себе');
+
+  console.log('— Выпуск обновления');
+  /* Важно: Carol (C) выше была забанена и кикнута — её соединение закрыто, поэтому здесь B. */
+  r = await B.req('admin.release', { version: '1.0.1' }); ok(!r.ok && /Только владелец/.test(r.err), 'выпускать обновление может только владелец');
+  r = await B.req('admin.releasestatus'); ok(!r.ok, 'статус выпуска доступен только владельцу');
+  r = await A.req('admin.release', { version: 'плохая' }); ok(!r.ok && /вида/.test(r.err), 'некорректная версия отклонена');
+  r = await A.req('admin.release', { version: '999' }); ok(!r.ok && /вида/.test(r.err), 'слишком короткая версия отклонена');
+  r = await A.req('admin.releasestatus'); ok(r.ok && r.running === false, 'статус выпуска: сборка не идёт');
+
+  console.log('— Владелец и админы');
+  r = await A.req('admin.code', { code: ADMIN_CODE }); ok(r.ok && r.owner, 'первый, кто ввёл код, — владелец');
+  r = await B.req('admin.code', { code: ADMIN_CODE }); ok(!r.ok && /Владелец уже назначен/.test(r.err), 'второй с верным кодом админку НЕ получает');
+  r = await B.req('admin.users'); ok(!r.ok, 'Bob всё ещё без прав');
+  r = await B.req('admin.add', { name: 'Bob' }); ok(!r.ok, 'не-владелец не может назначать админов');
+  r = await A.req('admin.add', { name: 'Bob' }); await sleep(80); ok(r.ok && B.last('role') && B.last('role').admin, 'владелец назначил Bob админом');
+  r = await B.req('admin.users'); ok(r.ok, 'Bob теперь админ');
+  r = await B.req('admin.add', { name: 'Carol' }); ok(!r.ok, 'админ не может назначать других админов');
+  r = await B.req('admin.ban', { name: 'Alice', minutes: 0 }); ok(!r.ok, 'админ не может банить владельца');
+  r = await B.req('admin.kick', { name: 'Alice' }); ok(!r.ok, 'админ не может кикнуть владельца');
+  r = await A.req('admin.remove', { name: 'Alice' }); ok(!r.ok, 'владельца снять нельзя');
+  const rd = await post('/api/register', { name: 'Dave', password: 'secret4' });
+  const D = await client(rd.token);
+  await A.req('admin.add', { name: 'Dave' });
+  r = await B.req('admin.ban', { name: 'Dave', minutes: 5 }); ok(!r.ok, 'админ не может банить другого админа');
+  r = await A.req('admin.remove', { name: 'Dave' }); ok(r.ok, 'владелец снял админа');
+  r = await D.req('admin.users'); ok(!r.ok, 'у снятого админа прав нет');
+
+  console.log('— Антиклик');
+  const AC = require('../anticlick.js');
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const gen = (posFn, ivFn) => { let t = 1000; const o = []; for (let i = 0; i < 50; i++) { const [x, y] = posFn(i); o.push([x, y, t]); t += ivFn(i); } return o; };
+  const human = gen(() => [rnd(100, 140), rnd(200, 240)], () => rnd(110, 260));
+  const still = gen(() => [300, 300], () => rnd(110, 260));
+  const every5 = gen(i => [[100, 100], [220, 150], [130, 300], [250, 250], [180, 120]][i % 5], () => rnd(110, 260));
+  const uniStill = gen(() => [300, 300], () => 100);
+  ok(!AC.analyze(human).ban, 'человек не банится');
+  ok(!AC.analyze(still).ban, 'неподвижная мышь с живыми интервалами не банится');
+  ok(AC.analyze(every5).ban, 'одна и та же позиция каждый 5-й клик (100%) → бан');
+  ok(AC.analyze(uniStill).ban && AC.analyze(uniStill).rule === 'intervals', 'одинаковые интервалы + одна позиция → бан (порог 40%)');
+  ok(!AC.analyze(every5.slice(0, 49)).ready, 'меньше 50 кликов — анализ не запускается');
+  // ровно 70% не банит, 72% банит (интервалы разные)
+  const frac = gen(i => (i % 10 < 3 ? [rnd(400, 900), rnd(400, 900)] : [[100, 100], [200, 200]][i % 2]), () => rnd(110, 260));
+  const fr = AC.analyze(frac); ok(typeof fr.share === 'number', 'доля совпадений считается (' + Math.round(fr.share * 100) + '%)');
+  r = await D.req('ac.report', { clicks: human }); ok(r.ok && !r.ban, 'сервер: человеческие клики не баним');
+  r = await D.req('ac.report', { clicks: human.slice(0, 10) }); ok(!r.ok, 'сервер: мало кликов — ошибка данных');
+  r = await D.req('ac.report', { clicks: every5 }); await sleep(120);
+  ok(r.ok && r.ban && D.last('ac.banned'), 'сервер: паттерн → бан аккаунта и уведомление');
+  const lg = await post('/api/login', { name: 'Dave', password: 'secret4' });
+  ok(!lg.ok && /только администратор/.test(lg.err), 'забаненный антикликом не может войти (разбанит только админ)');
+  r = await post('/api/acstatus', { name: 'Dave', password: 'secret4' }); ok(r.ok && r.banned, 'acstatus: бан активен');
+  r = await post('/api/acstatus', { name: 'Dave', password: 'bad' }); ok(!r.ok, 'acstatus: чужой пароль отклонён');
+  r = await B.req('admin.users', { q: 'dave' }); ok(r.users[0].banned && r.users[0].banAuto, 'в админке бан помечен как автоматический');
+  r = await A.req('ac.report', { clicks: every5 }); ok(r.ok && !r.ban, 'владелец автоматически не банится');
+  r = await post('/api/acstatus', { name: 'Dave', password: 'secret4', clicks: every5 }); ok(r.banned, 'acstatus с офлайн-кликами тоже банит');
+  r = await A.req('admin.unban', { name: 'Dave' }); ok(r.ok, 'админ разбанил');
+  r = await post('/api/acstatus', { name: 'Dave', password: 'secret4' }); ok(r.ok && !r.banned, 'acstatus: после разбана свободен');
+  ok((await post('/api/login', { name: 'Dave', password: 'secret4' })).ok, 'после разбана вход работает');
+
+  console.log('— Блэкджек 1 на 1');
+  await A.req('save.put', { main: makeSave(1e9), baseRev: 1, force: true });
+  await B.req('save.put', { main: makeSave(1e9), baseRev: 1, force: true });
+  r = await A.req('bj.create', { bet: 1e12 }); ok(!r.ok, 'ставка больше баланса отклонена');
+  r = await A.req('bj.create', { bet: 50000 }); ok(r.ok, 'стол создан'); await sleep(80);
+  ok(B.last('bj.tables').tables.length === 1, 'стол виден другим');
+  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  const balA0 = (await A.req('wallet.pending')).avail, balB0 = (await B.req('wallet.pending')).avail;
+  r = await B.req('bj.join', { table: A.last('bj.tables').tables[0].id }); ok(r.ok, 'Bob присоединился');
+  await sleep(100);
+  let ga = A.last('bj.state').game, gb = B.last('bj.state').game;
+  ok(ga.me.cards.length === 2 && ga.opp.cards.length === 2 && ga.opp.cards[0] === null && ga.opp.cards[1] !== null, 'соперник: первая карта скрыта, вторая видна');
+  ok(ga.opp.total === null && gb.opp.total === null, 'сумма соперника скрыта до конца');
+  ok(!!A.last('bj.state') && gb.bet === 50000, 'ставка 50000');
+  let guard = 0;
+  while (guard++ < 20) {
+    ga = A.last('bj.state').game; gb = B.last('bj.state').game;
+    if (ga.state === 'done') break;
+    const cur = ga.yourTurn ? A : B, g = ga.yourTurn ? ga : gb;
+    if (!g.yourTurn) { await sleep(50); continue; }
+    if (g.me.total < 15) await cur.req('bj.hit'); else await cur.req('bj.stand');
+    await sleep(60);
+  }
+  ga = A.last('bj.state').game; gb = B.last('bj.state').game;
+  ok(ga.state === 'done' && gb.state === 'done', 'партия завершена: ' + ga.result.reason);
+  ok(ga.opp.cards.every(Boolean), 'в конце карты соперника открыты');
+  const pa = (await A.req('wallet.pending')), pb = (await B.req('wallet.pending'));
+  const netA = pa.avail - balA0, netB = pb.avail - balB0;
+  console.log(`    итог: A ${netA >= 0 ? '+' : ''}${netA}, B ${netB >= 0 ? '+' : ''}${netB}`);
+  ok(ga.result.push ? (netA === 0 && netB === 0) : (netA === -netB && Math.abs(netA) === 50000), 'выплата корректна (победитель +ставка, проигравший −ставка, ничья 0)');
+  ok(netA + netB === 0, 'деньги не создаются и не пропадают');
+
+  console.log('— Отключение во время игры (техническое поражение)');
+  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  await A.req('save.put', { main: makeSave(1e9), baseRev: 2 });
+  await B.req('save.put', { main: makeSave(1e9), baseRev: 2 });
+  await A.req('bj.create', { bet: 10000 }); await sleep(80);
+  await B.req('bj.join', { table: A.last('bj.tables').tables.slice(-1)[0].id });
+  await sleep(100);
+  ok(A.last('bj.state').game.state === 'play' || A.last('bj.state').game.state === 'done', 'вторая игра запущена');
+
+  console.log('— Опыт, профиль, лидерборд');
+  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  r = await A.req('profile.get');
+  ok(r.ok && r.level >= 1 && typeof r.xp === 'number', 'profile.get отдаёт опыт и уровень');
+  ok(r.xp > 0 && r.levelNext > r.levelFloor, 'опыт накоплен (' + r.xp + '), границы уровня корректны');
+  r = await A.req('leaderboard');
+  ok(r.ok && r.xp.length >= 2 && r.money.length >= 2, 'лидерборд: топ по опыту и по деньгам');
+
+  console.log('— Онлайн-банк');
+  r = await A.req('bank.deposit', { amount: 100000 });
+  ok(r.ok && r.amount === 100000, 'вклад 100000 принят');
+  r = await A.req('wallet.pending');
+  ok(r.items.some(i => i.kind === 'debit' && i.amount === 100000), 'вклад списан из облачного баланса');
+  await A.req('wallet.ack', { ids: r.items.map(i => i.id) });
+  r = await A.req('bank.withdraw');
+  ok(r.ok && r.paid >= 100000, 'снятие вернуло вклад (' + r.paid + ')');
+  r = await A.req('wallet.pending');
+  ok(r.items.some(i => i.kind === 'credit' && i.amount >= 100000), 'снятие зачислено обратно');
+  await A.req('wallet.ack', { ids: r.items.map(i => i.id) });
+  ok(!(await A.req('bank.deposit', { amount: 10 })).ok, 'вклад ниже минимума отклонён');
+
+  console.log('— Комнаты чата и реакции');
+  r = await A.req('chat.send', { text: 'в торговую', room: 'trade' });
+  ok(r.ok, 'сообщение в комнату «Торговая»');
+  await sleep(80);
+  ok(B.last('chat.msg') && B.last('chat.msg').msg.room === 'trade', 'сообщение комнаты разослано с полем room');
+  r = await A.req('chat.history', { room: 'trade' });
+  ok(r.ok && r.msgs.some(m => m.text === 'в торговую'), 'история комнаты «Торговая»');
+  const mid = r.msgs[r.msgs.length - 1].id;
+  r = await B.req('chat.react', { msgId: mid, emoji: '🔥' });
+  ok(r.ok && r.react['🔥'] && r.react['🔥'].indexOf('Bob') >= 0, 'реакция добавлена');
+  await sleep(60);
+  ok(B.last('chat.react') && B.last('chat.react').msgId === mid, 'реакция разослана всем');
+  r = await B.req('chat.react', { msgId: mid, emoji: '🔥' });
+  ok(r.ok && !r.react['🔥'], 'повторный клик снимает реакцию');
+  ok(!(await B.req('chat.react', { msgId: mid, emoji: '💣' })).ok, 'недопустимая реакция отклонена');
+  r = await A.req('chat.history', { with: 'Bob' });
+  const dmId = (r.msgs.find(x => x.text === 'личка') || {}).id;
+  ok(!!dmId, 'личная переписка доступна');
+  r = await B.req('chat.react', { msgId: dmId, emoji: '👍' });
+  ok(r.ok && r.react['👍'] && r.react['👍'].indexOf('Bob') >= 0, 'реакция на личное сообщение работает');
+  await sleep(80);
+  ok(A.last('chat.react') && A.last('chat.react').msgId === dmId, 'собеседник видит реакцию на личное');
+  r = await A.req('chat.history', { with: 'Bob' });
+  ok(!!(r.msgs.find(x => x.id === dmId) || {}).react['👍'], 'реакция сохранена в переписке');
+  r = await A.req('chat.react', { msgId: dmId, emoji: '👍' });
+  ok(r.ok && r.react['👍'].indexOf('Alice') >= 0 && r.react['👍'].indexOf('Bob') >= 0, 'второй участник тоже ставит реакцию');
+  r = await A.req('chat.react', { msgId: dmId, emoji: '👍' });
+  ok(r.ok && r.react['👍'] && r.react['👍'].indexOf('Alice') < 0 && r.react['👍'].indexOf('Bob') >= 0, 'повторный клик снимает свою реакцию');
+  ok(!(await A.req('chat.react', { msgId: 'нет-такого-id', emoji: '👍' })).ok, 'реакция на несуществующее сообщение отклонена');
+
+  console.log('— Дуэли 1 на 1');
+  await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  r = await A.req('duel.create', { game: 'dice', bet: 50000 });
+  ok(r.ok, 'вызов на дуэль создан');
+  await sleep(80);
+  ok(B.last('duel.tables') && B.last('duel.tables').tables.some(t => t.game === 'dice'), 'вызов виден другим');
+  const dt = (await B.req('duel.tables')).tables.find(t => t.game === 'dice');
+  const balA = (await A.req('wallet.pending')).avail, balB = (await B.req('wallet.pending')).avail;
+  r = await B.req('duel.join', { table: dt.id });
+  ok(r.ok, 'соперник принял вызов');
+  await sleep(120);
+  const resA = A.last('duel.result'), resB = B.last('duel.result');
+  ok(resA && resB && resA.res.reason && resB.res.reason, 'оба получили результат: ' + (resA && resA.res.reason));
+  ok(resA.res.push ? true : (resA.res.youWon !== resB.res.youWon), 'определён победитель или ничья');
+  const pa2 = await A.req('wallet.pending'), pb2 = await B.req('wallet.pending');
+  const netA2 = pa2.avail - balA, netB2 = pb2.avail - balB;
+  ok(resA.res.push ? (netA2 === 0 && netB2 === 0) : (netA2 === -netB2 && Math.abs(netA2) === 50000), 'выплата дуэли корректна');
+  ok(netA2 + netB2 === 0, 'дуэль: деньги не создаются и не пропадают');
+  await A.req('wallet.ack', { ids: pa2.items.map(i => i.id) });
+  await B.req('wallet.ack', { ids: pb2.items.map(i => i.id) });
+  ok(!(await B.req('duel.join', { table: dt.id })).ok, 'повторно принять вызов нельзя');
+  ok(!(await A.req('duel.create', { game: 'coin', bet: 10 })).ok, 'ставка ниже минимума отклонена');
+
+  console.log('— Рулетка: математика ставок (roulette.js)');
+  const RL = require('../roulette.js');
+  ok(RL.ORDER.length === 37 && new Set(RL.ORDER).size === 37, 'на колесе 37 уникальных секторов');
+  ok(RL.allNumbers().join(',') === Array.from({ length: 37 }, (_, i) => i).join(','), 'на колесе присутствуют все числа 0–36');
+  ok(RL.RED_NUMS.size === 18, 'красных чисел ровно 18');
+  ok(RL.pocketColor(0) === 'green' && RL.pocketColor(1) === 'red' && RL.pocketColor(2) === 'black' && RL.pocketColor(36) === 'red', 'цвета лунок определены верно');
+  const coverCount = { straight: 1, split: 2, street: 3, corner: 4, line: 6, dozen: 12, column: 12, even: 18 };
+  ok(RL.BETS.length > 140 && RL.BETS.every(b => b.covers.length === coverCount[b.kind]), 'каждая ставка покрывает верное число чисел');
+  ok(RL.BETS.every(b => b.covers.every(n => n >= 0 && n <= 36)), 'ставки не выходят за пределы 0–36');
+  ok(RL.BETS.every(b => Math.abs(RL.expectedValue(b) + 1 / 37) < 1e-9), 'преимущество заведения у каждой ставки 1/37 (2.7%)');
+  let ev = RL.evaluate([{ id: 'n:17', amount: 1000 }, { id: 'd:2', amount: 1000 }, { id: 'high', amount: 1000 }], 17);
+  ok(ev.stake === 3000 && ev.returned === 39000 && ev.net === 36000 && ev.hits.length === 2, 'выигрыш по нескольким ставкам считается верно');
+  ev = RL.evaluate([{ id: 'red', amount: 1000 }, { id: 'n:0', amount: 500 }], 0);
+  ok(ev.returned === 500 * 36 && ev.hits.length === 1 && ev.net === 500 * 36 - 1500, 'зеро забирает равные шансы, но платит прямую ставку на 0');
+  ok(RL.ORDER.every((n, i) => Math.abs(RL.angleOf(n) - (i * RL.SPAN + RL.SPAN / 2)) < 1e-9) && RL.angleOf(36) < 360, 'углы секторов соответствуют порядку колеса');
+
+  console.log('— Дуэли: рулетка на цвет');
+  r = await A.req('duel.create', { game: 'roulette', bet: 50000, color: 'red' });
+  ok(r.ok, 'вызов на рулетку создан');
+  await sleep(80);
+  const rt = (await B.req('duel.tables')).tables.find(t => t.game === 'roulette');
+  ok(rt && rt.color === 'red', 'в списке вызовов виден цвет создателя');
+  ok(!(await B.req('duel.join', { table: rt.id })).ok, 'без выбора цвета рулетку принять нельзя');
+  ok(!(await B.req('duel.join', { table: rt.id, color: 'red' })).ok, 'занятый создателем цвет выбрать нельзя');
+  const rBalA = (await A.req('wallet.pending')).avail, rBalB = (await B.req('wallet.pending')).avail;
+  r = await B.req('duel.join', { table: rt.id, color: 'black' });
+  ok(r.ok, 'соперник принял вызов на противоположный цвет');
+  await sleep(120);
+  const rr = A.last('duel.result');
+  ok(rr && rr.res.game === 'roulette' && rr.res.myColor === 'red' && rr.res.oppColor === 'black', 'результат рулетки: цвета обоих игроков');
+  ok(rr.res.num >= 0 && rr.res.num <= 36 && (rr.res.color === 'red' || rr.res.color === 'black' || rr.res.color === 'green'), 'результат рулетки: выпавшее число и цвет');
+  ok(rr.res.color === 'green' ? (rr.res.push && rr.res.winner === null) : (rr.res.color === 'red' ? rr.res.youWon : !rr.res.youWon), 'победитель рулетки определён по выпавшему цвету');
+  const rpA = await A.req('wallet.pending'), rpB = await B.req('wallet.pending');
+  const rNetA = rpA.avail - rBalA, rNetB = rpB.avail - rBalB;
+  ok(rNetA + rNetB === 0 && (rr.res.push ? rNetA === 0 : Math.abs(rNetA) === 50000), 'выплата рулетки: деньги не создаются и не пропадают');
+  await A.req('wallet.ack', { ids: rpA.items.map(i => i.id) });
+  await B.req('wallet.ack', { ids: rpB.items.map(i => i.id) });
+
+  console.log('— Профиль: аватар, цвет, ник, список игроков');
+  r = await A.req('profile.get');
+  ok(r.ok && Array.isArray(r.colors) && Array.isArray(r.avatars) && r.avatars.length > 10, 'профиль отдаёт палитру цветов и аватарки');
+  r = await A.req('players.list', {});
+  ok(r.ok && r.players.length >= 2 && r.players.some(p => p.name === 'Alice') && r.players.some(p => p.online), 'список игроков с онлайн-статусом');
+  r = await A.req('players.list', { q: 'bob' });
+  ok(r.ok && r.players.length === 1 && r.players[0].name === 'Bob', 'поиск по списку игроков');
+  r = await A.req('profile.view', { name: 'Bob' });
+  ok(r.ok && r.name === 'Bob' && r.self === false && r.friend === true && typeof r.level === 'number' && typeof r.xp === 'number', 'просмотр чужого профиля: имя, уровень, опыт');
+  ok(r.stats && typeof r.stats.msgs === 'number' && typeof r.friends === 'number' && typeof r.online === 'boolean', 'профиль: статистика, число друзей, статус онлайн');
+  r = await B.req('profile.view', { name: 'Bob' });
+  ok(r.ok && r.self === true, 'свой профиль помечен как self');
+  ok(!(await A.req('profile.view', { name: 'НетТакого' })).ok, 'профиль несуществующего игрока отклонён');
+  r = await A.req('profile.setcolor', { color: 'gold' });
+  ok(r.ok && r.color === 'gold', 'цвет ника установлен');
+  ok(!(await A.req('profile.setcolor', { color: 'hack' })).ok, 'неизвестный цвет отклонён');
+  r = await A.req('profile.setcolor', { color: '#ff8a00' });
+  ok(r.ok && r.color === '#ff8a00', 'свой HEX-цвет принят');
+  r = await A.req('profile.setcolor', { color: '#ff8a00,#00c2ff' });
+  ok(r.ok && r.color === '#ff8a00,#00c2ff', 'HEX-градиент принят');
+  r = await A.req('profile.setcolor', { color: '#F80' });
+  ok(r.ok && r.color === '#f80', 'короткий HEX (#rgb) принят');
+  ok(!(await A.req('profile.setcolor', { color: '#12345' })).ok, 'неверный HEX отклонён');
+  ok(!(await A.req('profile.setcolor', { color: 'red;background:url(x)' })).ok, 'инъекция в CSS отклонена');
+  ok(!(await A.req('profile.setcolor', { color: '#ff8a00,#zzz' })).ok, 'мусор во втором цвете отклонён');
+  ok((await A.req('profile.setcolor', { color: 'gold' })).ok, 'возврат к готовому цвету');
+  r = await A.req('profile.setbio', { bio: 'Люблю кликать и ловить пиксели' });
+  ok(r.ok && r.bio === 'Люблю кликать и ловить пиксели', 'описание профиля сохранено');
+  r = await B.req('profile.view', { name: 'Alice' });
+  ok(r.ok && r.bio === 'Люблю кликать и ловить пиксели', 'описание видно в чужом профиле');
+  r = await A.req('profile.get');
+  ok(r.ok && r.bio === 'Люблю кликать и ловить пиксели', 'описание отдаётся в своём профиле');
+  r = await A.req('profile.setbio', { bio: 'x'.repeat(300) });
+  ok(r.ok && r.bio.length === 140, 'описание обрезается до 140 символов');
+  r = await A.req('profile.setbio', { bio: '  много   пробелов \n и переносов  ' });
+  ok(r.ok && r.bio === 'много пробелов и переносов', 'лишние пробелы и переносы убираются');
+  r = await A.req('profile.setbio', { bio: '' });
+  ok(r.ok && r.bio === '', 'описание можно очистить');
+  r = await A.req('profile.setavatar', { avatar: '🦊' });
+  ok(r.ok && r.avatar === '🦊', 'аватарка-эмодзи установлена');
+  ok((await A.req('profile.setavatar', { avatar: 'data:image/png;base64,' + 'A'.repeat(120) })).ok, 'картинка-аватарка принята');
+  ok(!(await A.req('profile.setavatar', { avatar: 'javascript:alert(1)' })).ok, 'опасная аватарка отклонена');
+  ok(!(await A.req('profile.setavatar', { avatar: 'data:image/png;base64,' + 'A'.repeat(40000) })).ok, 'слишком большая аватарка отклонена');
+  await A.req('profile.setavatar', { avatar: '🦊' });
+  await B.req('wallet.pending').then(x => B.req('wallet.ack', { ids: x.items.map(i => i.id) }));
+  r = await A.req('profile.setname', { name: 'Alice2' });
+  ok(r.ok && r.name === 'Alice2', 'ник изменён');
+  await sleep(100);
+  ok(B.last('friends.update'), 'друзья получили обновление о смене ника');
+  r = await B.req('friends.list');
+  ok(r.friends.some(f => f.name === 'Alice2'), 'у друга обновилось имя');
+  r = await B.req('chat.history', { with: 'Alice2' });
+  ok(r.ok && r.msgs.some(m => m.text === 'личка'), 'личная переписка сохранена после смены ника');
+  ok(!(await A.req('profile.setname', { name: 'Alice3' })).ok, 'повторная смена ника — кулдаун');
+  ok(!(await A.req('profile.setname', { name: 'Bob' })).ok, 'занятый ник отклонён');
+  ok(!(await A.req('profile.setname', { name: 'x' })).ok, 'слишком короткий ник отклонён');
+  r = await B.req('players.list', { q: 'alice2' });
+  ok(r.ok && r.players.length === 1 && r.players[0].avatar === '🦊' && r.players[0].color === 'gold', 'в списке игроков видны аватарка и цвет');
+  r = await A.req('players.list', { q: 'alice' });
+  ok(r.ok && !r.players.some(p => p.name === 'Alice') && r.players.some(p => p.name === 'Alice2'), 'старый ник освободился, новый занят');
+
+  console.log('\n— Выпуск обновления: где собирать');
+  const full = { node: true, npm: true, electron: true, mobile: true, jdk: true, sdk: true, keystore: true };
+  const gh = { token: 'tok', repo: 'ArbyzikOwO/vitalyaclicker' };
+  const badMode = fn => { try { fn(); return false; } catch (e) { return true; } };
+  ok(ReleasePlan.pickMode('auto', full, gh) === 'local', 'авто: набор для сборки есть — собираем на этом компьютере');
+  ok(ReleasePlan.pickMode('auto', {}, gh) === 'cloud', 'авто: набора нет, GitHub есть — собираем в облаке');
+  ok(ReleasePlan.pickMode('cloud', full, gh) === 'cloud', 'принудительно в облаке');
+  ok(ReleasePlan.pickMode('local', full, {}) === 'local', 'принудительно локально (GitHub не нужен)');
+  ok(badMode(() => ReleasePlan.pickMode('local', {}, gh)), 'принудительно локально без набора — ошибка');
+  ok(badMode(() => ReleasePlan.pickMode('cloud', full, {})), 'принудительно в облаке без токена — ошибка');
+  ok(badMode(() => ReleasePlan.pickMode('auto', {}, {})), 'ни набора, ни GitHub — ошибка');
+  ok(badMode(() => ReleasePlan.pickMode('телепорт', full, gh)), 'неизвестный способ сборки — ошибка');
+  ok(ReleasePlan.missingLocal({ node: true, npm: true }).length === 5, 'подсказка перечисляет все недостающие части набора');
+  ok(ReleasePlan.missingLocal(full).length === 0, 'полный набор — ничего не хватает');
+  const c1 = ReleasePlan.caps(full, gh), c2 = ReleasePlan.caps({}, gh), c3 = ReleasePlan.caps(full, {}), c4 = ReleasePlan.caps({}, {});
+  ok(c1.local && c1.cloud && c1.mode === 'local' && c1.repo === gh.repo, 'состояние: доступно и локально, и в облаке');
+  ok(c2.mode === 'cloud' && !c2.local && c2.cloud, 'состояние: только облако');
+  ok(c3.mode === 'local' && !c3.cloud, 'состояние: только этот компьютер');
+  ok(c4.mode === 'none' && !c4.local && !c4.cloud && c4.missing.length === 7, 'состояние: собирать нечем');
+
+  await sleep(1100);   /* соединение ограничено 60 сообщениями в секунду — даём счётчику сброситься */
+  r = await A.req('admin.releasestatus');
+  ok(r.ok && typeof r.local === 'boolean' && typeof r.cloud === 'boolean' && Array.isArray(r.missing), 'admin.releasestatus отдаёт состояние сборки');
+  ok(r.ok && r.running === false && !r.mode, 'сборка сейчас не идёт');
+  await sleep(80);
+  r = await A.req('admin.release', { version: '1.0.9', mode: 'телепорт' });
+  ok(!r.ok && /способ/i.test(r.err || ''), 'неизвестный способ сборки отклонён');
+  await sleep(80);
+  r = await A.req('admin.releasestatus');
+  ok(r.ok && r.running === false, 'после отказа сборка не запущена и игра разблокирована');
+  await sleep(80);
+  r = await B.req('admin.releasestatus');
+  ok(!r.ok, 'состояние выпуска видит только владелец');
+
+  console.log(`\nИтого: ${pass} прошло, ${fail} упало`);
+  process.exit(fail ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(2); });

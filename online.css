@@ -1,0 +1,270 @@
+/* ===== VitalyaClicker 69 — онлайн-раздел (v2: обновлённый визуал) ===== */
+.online-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;background:#566074;vertical-align:middle;transition:.2s}
+.online-dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+.online-dot.unread{background:var(--gold);box-shadow:0 0 8px var(--gold)}
+
+#panel-online{padding-bottom:24px}
+
+/* ---------- карточки ---------- */
+.ol-box{position:relative;background:linear-gradient(180deg,#1b2231,#151b27);border:1px solid var(--line);border-radius:18px;padding:16px 14px;margin-bottom:12px;box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.ol-box h3{display:flex;align-items:center;gap:6px;font-size:14.5px;font-weight:900;margin-bottom:8px;letter-spacing:.3px}
+.ol-sub-note{font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:10px}
+.ol-row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.ol-row.nowrap{flex-wrap:nowrap}
+
+/* ---------- поля и кнопки ---------- */
+.ol-in{flex:1;min-width:0;background:#0e1219;border:1px solid #2b3548;border-radius:12px;color:var(--text);font-size:14px;padding:11px 12px;font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s;user-select:text;-webkit-user-select:text}
+.ol-in:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(255,201,60,.14)}
+.ol-btn{padding:11px 16px;border:none;border-radius:12px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-family:inherit;font-weight:900;font-size:13px;cursor:pointer;transition:transform .12s,filter .15s,box-shadow .15s;white-space:nowrap;box-shadow:0 4px 12px rgba(255,159,28,.25)}
+.ol-btn:hover{filter:brightness(1.07)}
+.ol-btn:active{transform:scale(.97)}
+.ol-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.ol-btn.sec{background:#222b3c;color:var(--text);border:1px solid #313c50;box-shadow:none}
+.ol-btn.sec:hover{border-color:var(--gold);color:var(--gold)}
+.ol-btn.red{background:linear-gradient(180deg,#ff6b6b,#b02020);color:#fff;box-shadow:0 4px 12px rgba(255,92,92,.25)}
+.ol-btn.green{background:linear-gradient(180deg,#4be88f,#1e8a4f);color:#052b14;box-shadow:0 4px 12px rgba(61,220,132,.25)}
+.ol-mini{padding:6px 10px;border-radius:9px;border:1px solid #313c50;background:#222b3c;color:var(--text);font-family:inherit;font-weight:800;font-size:11.5px;cursor:pointer;transition:.12s}
+.ol-mini:hover{border-color:var(--gold);color:var(--gold)}
+.ol-mini:active{transform:scale(.95)}
+.ol-mini.red:hover{border-color:var(--red);color:var(--red)}
+
+/* ---------- экран входа ---------- */
+.ol-auth{padding:20px 16px}
+.ol-hero{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:6px}
+.ol-hero h3{font-size:18px;margin:0;background:linear-gradient(180deg,#ffd85e,#ff9f1c);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ol-hero-ico{width:58px;height:58px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;background:radial-gradient(circle at 35% 30%,#2e4b7a,#17233a);border:2px solid #3b5d94;box-shadow:0 0 28px rgba(80,140,255,.35)}
+.ol-ver{font-size:10.5px;font-weight:800;letter-spacing:.3px;color:var(--muted);background:#0e1219;border:1px solid #2b3548;border-radius:20px;padding:3px 9px;white-space:nowrap}
+.ol-perks{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
+.ol-perks span{font-size:10.5px;font-weight:800;padding:4px 9px;border-radius:20px;background:#0e1219;border:1px solid #2b3548;color:var(--muted)}
+
+/* ---------- шапка профиля ---------- */
+.ol-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:12px 14px}
+.ol-prof{display:flex;align-items:center;gap:11px;min-width:0}
+.ol-ava{flex:0 0 auto;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:900;color:#0d1a2e;background:linear-gradient(135deg,#8fc2ff,#4f8dea);box-shadow:0 0 0 3px rgba(79,141,234,.25)}
+.ol-ava.owner{background:linear-gradient(135deg,#ffe38a,#ff9f1c);color:#2a1c00;box-shadow:0 0 0 3px rgba(255,201,60,.35),0 0 18px rgba(255,159,28,.4)}
+.ol-who{font-size:15.5px;font-weight:900;display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.ol-status{font-size:11px;font-weight:800;color:var(--muted);margin-top:2px}
+.ol-status.ok{color:var(--green)}
+.ol-status.bad{color:var(--red)}
+
+/* ---------- подразделы ---------- */
+.ol-subtabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;padding:2px 1px 4px}
+.ol-subtab{position:relative;flex:1 1 84px;min-width:84px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 6px 8px;border:1px solid var(--line);background:linear-gradient(180deg,#1a2130,#141a26);color:var(--muted);border-radius:14px;font-family:inherit;cursor:pointer;white-space:nowrap;transition:.15s}
+.ol-subtab .si{font-size:19px;line-height:1}
+.ol-subtab .sl{font-size:11px;font-weight:800}
+.ol-subtab:hover{color:var(--text);border-color:#3a4660}
+.ol-subtab:active{transform:scale(.96)}
+.ol-subtab.active{color:var(--gold);border-color:var(--gold);background:linear-gradient(180deg,#2b3550,#1c2538);box-shadow:0 4px 14px rgba(255,201,60,.18)}
+.ol-subtab .badge{position:absolute;top:5px;right:8px;width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold)}
+.ol-sub{display:none}
+.ol-sub.active{display:block;animation:olfade .2s ease}
+@keyframes olfade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* ---------- списки и строки ---------- */
+.ol-kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:7px 0;border-bottom:1px dashed #232b3a}
+.ol-kv:last-child{border-bottom:none}
+.ol-kv b{color:var(--gold)}
+.ol-preview{margin-top:10px;padding:11px 12px;border-radius:12px;background:#0e1219;border:1px dashed #313c50;font-size:12.5px;line-height:1.6;color:var(--muted)}
+.ol-preview b{color:var(--text)}
+.ol-list{display:flex;flex-direction:column;gap:7px;margin-top:10px}
+.ol-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-radius:12px;background:#0f141d;border:1px solid #232b3a;font-size:12.5px;transition:border-color .15s}
+.ol-item:hover{border-color:#34405a}
+.ol-item.col{flex-direction:column;align-items:stretch}
+.ol-item .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ol-item .acts{display:flex;gap:5px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.ol-pos{color:var(--green);font-weight:900}
+.ol-neg{color:var(--red);font-weight:900}
+.ol-dim{color:var(--muted);font-size:11px}
+.ol-pres{display:inline-block;width:9px;height:9px;border-radius:50%;background:#566074;margin-right:7px}
+.ol-pres.on{background:var(--green);box-shadow:0 0 7px var(--green)}
+.ol-empty{color:var(--muted);font-size:12px;padding:14px 4px;text-align:center}
+.ol-tag{display:inline-block;font-size:9.5px;font-weight:900;letter-spacing:.4px;padding:2px 7px;border-radius:20px;background:#2c3648;color:var(--gold);margin-left:6px;vertical-align:middle}
+.ol-tag.red{color:#fff;background:#8a1f1f}
+.ol-tag.gold{color:#2a1c00;background:linear-gradient(180deg,#ffe38a,#ff9f1c)}
+
+/* ---------- чат ---------- */
+.ol-chatlog{height:320px;overflow-y:auto;background:#0b0f16;border:1px solid #232b3a;border-radius:14px;padding:8px;font-size:13px;line-height:1.45;user-select:text;-webkit-user-select:text;display:flex;flex-direction:column;gap:5px}
+.ol-msg{padding:6px 10px;border-radius:12px;background:#151c29;border-left:3px solid #2f3b52;word-break:break-word;max-width:92%;align-self:flex-start}
+.ol-msg.mine{align-self:flex-end;background:#2a2410;border-left-color:var(--gold);border-radius:12px}
+.ol-msg .t{color:#566074;font-size:10px;margin-right:6px}
+.ol-msg b{color:#9ec5ff}
+.ol-msg b.me{color:var(--gold)}
+.ol-msg b.adm{color:#ff7a7a}
+.ol-msg b.own{color:#ffd85e;text-shadow:0 0 8px rgba(255,200,60,.5)}
+.ol-msg b.own::before{content:'👑 '}
+.ol-msg .del{cursor:pointer;margin-left:8px;opacity:.45}
+.ol-msg .del:hover{opacity:1}
+.ol-msg.sys{color:var(--muted);font-style:italic;background:none;border-left:none;max-width:100%;align-self:center}
+
+/* ---------- блэкджек ---------- */
+.bj-felt{background:radial-gradient(ellipse at 50% 35%,#1f7449 0%,#0f3d27 72%);border:2px solid #2d8a5a;border-radius:20px;padding:16px 10px;box-shadow:inset 0 0 50px rgba(0,0,0,.5),0 8px 22px rgba(0,0,0,.35)}
+.bj-side{text-align:center;padding:6px 0}
+.bj-name{font-size:12.5px;font-weight:900;margin-bottom:6px;color:#d7ffe9}
+.bj-cards{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;min-height:66px}
+.bj-card{width:46px;height:64px;border-radius:8px;background:linear-gradient(180deg,#fff,#e9edf2);color:#111;font-weight:900;font-size:16px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 10px rgba(0,0,0,.55);animation:bjdeal .25s ease}
+.bj-card.red{color:#d22}
+.bj-card.back{background:repeating-linear-gradient(45deg,#2a3f9a,#2a3f9a 5px,#1d2d73 5px,#1d2d73 10px);color:#9fb0ff;border:2px solid #fff}
+@keyframes bjdeal{from{transform:translateY(-14px) scale(.85);opacity:0}to{transform:none;opacity:1}}
+.bj-total{margin-top:6px;font-size:13px;font-weight:900;color:#fff}
+.bj-pot{text-align:center;margin:10px auto;font-size:12.5px;font-weight:900;color:var(--gold);text-shadow:0 1px 4px rgba(0,0,0,.6);background:rgba(0,0,0,.28);border:1px solid rgba(255,201,60,.35);border-radius:20px;padding:5px 14px;width:max-content;max-width:100%}
+.bj-actions{display:flex;gap:8px;margin-top:10px}
+.bj-actions .ol-btn{flex:1;padding:14px}
+.bj-result{margin-top:10px;padding:12px;border-radius:14px;text-align:center;font-weight:900;font-size:15px;background:rgba(0,0,0,.38)}
+.bj-result.win{color:var(--green)}
+.bj-result.lose{color:var(--red)}
+.bj-result small{display:block;margin-top:4px;font-size:11.5px;color:#d7ffe9;font-weight:700}
+.bj-turn{font-size:11.5px;font-weight:800;margin-top:6px;text-align:center;color:#d7ffe9}
+
+/* ---------- админка ---------- */
+.ol-adm-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ol-adm-stats div{background:#0e1219;border:1px solid #232b3a;border-radius:12px;padding:9px 4px;text-align:center}
+.ol-adm-stats b{display:block;color:var(--gold);font-size:17px}
+.ol-adm-stats i{font-style:normal;font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.ol-owner{border-color:#6b5a1f;background:linear-gradient(180deg,#27220f,#171309)}
+
+/* ---------- объявление админа ---------- */
+#olAnnounce{position:fixed;top:0;left:0;right:0;z-index:3000;padding:12px 16px;background:linear-gradient(180deg,#ff9f1c,#c46a00);color:#1a0f00;font-weight:900;font-size:14px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.6);transform:translateY(-110%);transition:.3s}
+#olAnnounce.show{transform:none}
+#olAnnounce small{display:block;font-size:10.5px;opacity:.75;font-weight:700}
+
+/* ============================================================
+   ONLINE 2.0 — профиль, уровни, банк, аркада, дуэли, реакции
+   ============================================================ */
+.ol-ava{position:relative}
+.ol-ava .ol-ava-txt{line-height:1}
+.ol-ava .ol-lvl{position:absolute;right:-5px;bottom:-5px;min-width:18px;height:18px;padding:0 4px;border-radius:10px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-size:10.5px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+.ol-prof-main{min-width:0;display:flex;flex-direction:column;gap:4px}
+.ol-xpbar{position:relative;width:180px;max-width:44vw;height:14px;border-radius:8px;background:#0e1219;border:1px solid #2b3548;overflow:hidden}
+.ol-xpbar i{position:absolute;top:0;bottom:0;left:0;width:0;background:linear-gradient(90deg,#4f8dea,#8fc2ff);transition:width .4s}
+.ol-xpbar .ol-xptext{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:900;color:#dfe9ff;text-shadow:0 1px 2px #000}
+.ol-coins{font-size:12px;font-weight:900;color:var(--gold);background:#0e1219;border:1px solid #2b3548;border-radius:20px;padding:5px 12px;white-space:nowrap}
+
+.ol-profbox{text-align:left}
+.ol-profbig{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.ol-avabig{position:relative;flex:0 0 auto;width:66px;height:66px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:#0d1a2e;background:linear-gradient(135deg,#8fc2ff,#4f8dea);box-shadow:0 0 0 3px rgba(79,141,234,.25)}
+.ol-avabig.owner{background:linear-gradient(135deg,#ffe38a,#ff9f1c);color:#2a1c00;box-shadow:0 0 0 3px rgba(255,201,60,.35),0 0 22px rgba(255,159,28,.4)}
+.ol-lvlbig{position:absolute;right:-6px;bottom:-6px;min-width:26px;height:26px;padding:0 6px;border-radius:14px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.5)}
+.ol-bigxp{position:relative;height:22px;border-radius:12px;background:#0e1219;border:1px solid #2b3548;overflow:hidden}
+.ol-bigxp-fill{position:absolute;top:0;bottom:0;left:0;width:0;background:linear-gradient(90deg,#1e8a4f,#4be88f);transition:width .5s}
+.ol-bigxp-t{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#eaf7ef;text-shadow:0 1px 3px #000}
+.ol-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.ol-stats div{background:#0e1219;border:1px solid #232b3a;border-radius:12px;padding:9px 4px;text-align:center}
+.ol-stats b{display:block;color:var(--gold);font-size:16px}
+.ol-stats i{font-style:normal;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+
+.ol-bankpad{text-align:center;padding:16px 10px;border-radius:14px;background:radial-gradient(ellipse at 50% 20%,#1c2c22,#0f1a14);border:1px solid #2d5a3e}
+.ol-bankval{font-size:28px;font-weight:900;color:var(--green);text-shadow:0 2px 10px rgba(61,220,132,.35)}
+
+.ol-arc-card{margin-top:12px;padding:12px;border-radius:14px;background:#0f141d;border:1px solid #232b3a}
+.ol-arc-head{display:flex;align-items:center;gap:10px}
+.ol-arc-ico{font-size:26px}
+.ol-arc-name{font-weight:900;font-size:13.5px}
+.ol-arc-res{margin-top:12px;padding:12px;border-radius:14px;text-align:center;font-weight:900;font-size:15px;background:rgba(0,0,0,.35);border:1px solid #232b3a}
+.ol-arc-res.win{color:var(--green);border-color:#2d5a3e}
+.ol-arc-res.lose{color:var(--red);border-color:#5a2d2d}
+.ol-arc-res small{display:block;margin-top:3px;font-size:11px;font-weight:700;color:var(--muted)}
+
+/* ---------- рулетка: колесо, стол ставок, фишки ---------- */
+.ol-rou-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.ol-rou-head h3{margin:0}
+.ol-rou-top{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-top:12px}
+.ol-rou-wheelwrap{position:relative;flex:0 0 auto;width:min(280px,100%);margin:0 auto}
+.ol-rou-wheel{display:block;width:100%;height:auto}
+.ol-rou-side{flex:1 1 200px;min-width:190px;display:flex;flex-direction:column;gap:9px}
+.ol-rou-out{font-size:11.5px;font-weight:800;color:var(--muted);text-align:center;line-height:1.4;margin-top:6px}
+.ol-rou-stake{font-size:12px;font-weight:800;color:var(--muted)}
+.ol-rou-stake b{color:var(--gold);font-size:14px}
+.ol-rou-chips{display:flex;gap:6px;flex-wrap:wrap}
+.ol-rou-chipbtn{padding:7px 11px;border-radius:999px;border:1px solid #2b3548;background:#0e1219;color:var(--muted);font-family:inherit;font-weight:900;font-size:11.5px;cursor:pointer;transition:filter .15s,border-color .15s}
+.ol-rou-chipbtn:hover{filter:brightness(1.15)}
+.ol-rou-chipbtn.active{border-color:var(--gold);background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00}
+.ol-rou-spin{padding:13px;width:100%;font-size:14px}
+.ol-rou-scroll{overflow-x:auto;margin-top:12px;padding:6px 2px 6px}
+.ol-rou-table{display:grid;grid-template-columns:28px repeat(12,minmax(0,1fr)) 32px;gap:2px;min-width:326px;position:relative}
+.ol-rou-num{position:relative;min-height:30px;display:flex;align-items:center;justify-content:center;border-radius:4px;font-family:inherit;font-weight:900;font-size:12px;color:#fff;cursor:pointer;user-select:none;-webkit-user-select:none;transition:filter .12s}
+.ol-rou-num:hover{filter:brightness(1.2)}
+.ol-rou-zero{font-size:15px}
+.ol-rou-third{position:relative;display:flex;align-items:center;justify-content:center;min-height:26px;padding:0 3px;border:1px solid #2b3548;border-radius:4px;background:#131926;color:var(--text);font-family:inherit;font-weight:900;font-size:10.5px;text-align:center;cursor:pointer;user-select:none;-webkit-user-select:none}
+.ol-rou-third:hover{border-color:var(--gold);color:var(--gold)}
+.ol-rou-col{font-size:10px;color:var(--muted)}
+.rb-red{background:linear-gradient(180deg,#d84343,#a72424)}
+.rb-black{background:linear-gradient(180deg,#262b39,#12141b)}
+.rb-green{background:linear-gradient(180deg,#26a55f,#157a3c)}
+.ol-rou-third.rb-red{background:linear-gradient(180deg,#b83434,#7d1d1d);color:#ffdede}
+.ol-rou-third.rb-black{background:linear-gradient(180deg,#232838,#101219);color:#dfe5f2}
+.ol-rou-third.rb-red:hover,.ol-rou-third.rb-black:hover{filter:brightness(1.18);color:#fff}
+/* зоны сплитов (v/h), углов (d), стритов (st) и линий (ln) */
+.hzz{position:absolute;z-index:3;border-radius:3px;transition:background .12s}
+.hzz.v{width:11px}
+.hzz.h{height:11px}
+.hzz.d{width:13px;height:13px}
+.hzz.st{height:12px}
+.hzz.ln{width:16px;height:12px}
+.hzz:hover{background:rgba(255,216,94,.45)}
+/* фишки на столе */
+.ol-rou-chip{position:absolute;top:2px;left:2px;z-index:4;padding:0 5px;border-radius:999px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-family:inherit;font-weight:900;font-size:9.5px;line-height:14px;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.55)}
+.ol-rou-chip.sm{top:50%;left:50%;transform:translate(-50%,-50%);width:12px;height:12px;padding:0;border:2px solid #fff3cf;border-radius:50%;line-height:0}
+
+.ol-duelbox.win{border-color:#2d5a3e}
+.ol-duelbox.lose{border-color:#5a2d2d}
+.ol-duel-rolls{display:flex;align-items:center;justify-content:space-around;gap:10px;padding:12px 0}
+.ol-duel-lab{font-size:11px;color:var(--muted);font-weight:800;margin-bottom:4px}
+.ol-duel-val{font-size:22px;font-weight:900;color:var(--text)}
+.ol-duel-vs{font-weight:900;color:var(--gold);font-size:13px}
+/* рулетка в дуэли: ставки игроков + одно колесо */
+.ol-duel-rou{display:flex;align-items:center;justify-content:space-around;gap:10px;padding:12px 0;flex-wrap:wrap}
+.ol-duel-pick{text-align:center;flex:1 1 auto}
+.ol-duel-pickv{font-size:13px;font-weight:900;padding:6px 12px;border-radius:999px;border:1px solid #2b3548;background:#0e1219;display:inline-block}
+.ol-duel-pickv.red{color:#ffb0b0;border-color:#7d2a2a;background:linear-gradient(180deg,#3a1a1a,#241010)}
+.ol-duel-pickv.black{color:#dfe5f2;border-color:#3a4459;background:linear-gradient(180deg,#242a38,#12141b)}
+.ol-duel-wheelwrap{width:min(290px,100%);margin:6px auto 0}
+.ol-duel-out small{display:block;margin-top:3px;font-size:11px;font-weight:700;color:var(--muted)}
+
+.ol-reacts{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.ol-react{cursor:pointer;font-size:11px;font-weight:800;padding:2px 7px;border-radius:20px;background:#0e1219;border:1px solid #2b3548;color:var(--text)}
+.ol-react:hover{border-color:var(--gold)}
+.ol-react.mine{border-color:var(--gold);background:#2a2410;color:var(--gold)}
+.ol-react.add{color:var(--muted)}
+.ol-emoji{display:flex;flex-wrap:wrap;gap:2px;margin-top:5px}
+.ol-emoji-b{cursor:pointer;font-size:16px;padding:1px 3px;border-radius:8px;transition:.12s}
+.ol-emoji-b:hover{background:#222b3c;transform:scale(1.15)}
+.ol-emobar{display:flex;flex-wrap:wrap;gap:2px;margin-top:8px}
+.ol-mention{color:var(--gold);font-weight:900;background:rgba(255,201,60,.12);border-radius:6px;padding:0 3px}
+.ol-msg .txt{word-break:break-word}
+
+/* ---------- аватарки, цвета ника, список игроков ---------- */
+.ol-avemoji-i{font-size:24px;line-height:1}
+.ol-avimg-i{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
+.ol-avabig .ol-avemoji-i{font-size:36px}
+.ol-pres-ava{flex:0 0 auto;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:15px;background:#0e1219;border:1px solid #2b3548;overflow:hidden;vertical-align:middle;margin-right:7px}
+.ol-pres-ava.init{font-size:12px;font-weight:900;color:#cfe0ff;background:#1d2b45;border-color:#35507e}
+.ol-item .ol-nm{font-weight:900}
+.ol-sysmsg{color:var(--muted);font-style:italic;background:none;border-left:none;max-width:100%;align-self:center;font-size:11.5px;text-align:center}
+
+.ol-edit-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.ol-avabig-prev{flex:0 0 auto;width:66px;height:66px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:#0d1a2e;background:linear-gradient(135deg,#8fc2ff,#4f8dea);overflow:hidden;box-shadow:0 0 0 3px rgba(79,141,234,.25)}
+.ol-ava-grid{display:flex;flex-wrap:wrap;gap:6px}
+.ol-ava-opt{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:21px;background:#0f141d;border:1px solid #232b3a;cursor:pointer;transition:.12s}
+.ol-ava-opt:hover{border-color:var(--gold);transform:translateY(-2px)}
+.ol-ava-opt.on{border-color:var(--gold);box-shadow:0 0 0 2px rgba(255,201,60,.35)}
+.ol-color-grid{display:flex;flex-wrap:wrap;gap:8px}
+.ol-color-opt{width:38px;height:26px;border-radius:8px;cursor:pointer;border:2px solid transparent;transition:.12s}
+.ol-color-opt:hover{transform:translateY(-2px)}
+.ol-color-opt.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.35)}
+.ol-colorpick{flex:0 0 auto;width:52px;height:38px;padding:2px;border:1px solid var(--line);border-radius:10px;background:#0f141d;cursor:pointer}
+.ol-colorpick::-webkit-color-swatch-wrapper{padding:0}
+.ol-colorpick::-webkit-color-swatch{border:none;border-radius:7px}
+.ol-player-row{display:flex;align-items:center;gap:8px}
+.ol-player-row .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ol-badge-online{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);margin-right:6px}
+.ol-badge-off{display:inline-block;width:8px;height:8px;border-radius:50%;background:#566074;margin-right:6px}
+.ol-bio{margin:14px 0 20px;padding:10px 12px;border-radius:12px;background:#0e1219;border:1px solid #232b3a;font-size:12.5px;color:#cfe0ff;line-height:1.55;text-align:center;word-break:break-word}
+
+/* ---------- просмотр чужого профиля ---------- */
+.ol-nmlink{cursor:pointer}
+.ol-nmlink:hover{text-decoration:underline}
+.ol-pmodal{position:fixed;inset:0;z-index:80;background:rgba(6,9,14,.74);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:26px 14px;overflow-y:auto}
+.ol-pcard{position:relative;width:100%;max-width:430px;background:linear-gradient(180deg,#1b2231,#151b27);border:1px solid var(--line);border-radius:20px;padding:18px 16px;box-shadow:0 18px 50px rgba(0,0,0,.55);animation:fade .18s ease}
+.ol-pclose{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:10px;border:1px solid var(--line);background:#0f141d;color:var(--muted);cursor:pointer;font-family:inherit;font-size:13px;line-height:1}
+.ol-pclose:hover{border-color:#ff6b6b;color:#ff6b6b}
+.ol-pcard .ol-row .ol-btn{flex:1}

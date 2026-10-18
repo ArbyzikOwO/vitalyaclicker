@@ -1,0 +1,19 @@
+{
+  "name": "vitalyaclicker-mobile",
+  "version": "1.0.6",
+  "description": "VitalyaClicker — мобильная сборка (Capacitor/Android)",
+  "private": true,
+  "scripts": {
+    "add:android": "cap add android",
+    "sync": "cap sync android",
+    "apk": "cap sync android && cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.2",
+    "@capacitor/core": "^6.2.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.2.2"
+  }
+}

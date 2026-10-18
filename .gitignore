@@ -1,0 +1,21 @@
+# ---- артефакты сборки и локальные секреты (в репозиторий не попадают) ----
+dist/
+_build/dl/
+_build/stage/
+_build/electron/stage/
+_build/mobile/www/
+_build/mobile/android/
+_build/jdk/
+_build/sdk/
+_build/npm-cache/
+_build/**/node_modules/
+tools/logs/
+tools/cloudflared
+tools/cloudflared.exe
+tools/server.txt
+tools/gh.config.json
+tools/build.config.json
+*.keystore
+server/data/
+server/secret.json
+node_modules/

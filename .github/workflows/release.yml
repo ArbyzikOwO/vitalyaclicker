@@ -1,0 +1,122 @@
+# =====================================================================
+#  Выпуск обновления в облаке GitHub.
+#
+#  Запускается:
+#    • кнопкой «🚀 Выпуск обновления» в админке игры (сервер отправляет
+#      workflow_dispatch с версией, описанием и служебной меткой);
+#    • вручную: вкладка Actions → «Выпуск обновления» → Run workflow.
+#
+#  Что делает: прогоняет тесты сервера, собирает EXE (Electron) и APK
+#  (Capacitor + Android SDK 34), подписывает APK ключом из секретов и
+#  выкладывает файлы в GitHub Releases, обновляя version.json.
+#
+#  Секреты репозитория (Settings → Secrets and variables → Actions):
+#    ANDROID_KEYSTORE_B64 — ключ подписи vitalyaclicker.keystore в base64
+#    ANDROID_KS_PASS      — пароль хранилища и ключа
+#    ANDROID_KS_ALIAS     — alias ключа (vitalyaclicker)
+# =====================================================================
+name: Выпуск обновления
+
+run-name: "Выпуск v${{ inputs.version || 'авто' }} [${{ inputs.marker || 'вручную' }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия, например 1.0.7 (пусто — поднимется сама)'
+        required: false
+        default: ''
+        type: string
+      notes:
+        description: 'Что нового (увидят игроки)'
+        required: false
+        default: ''
+        type: string
+      marker:
+        description: 'Служебная метка запуска (заполняет сервер игры)'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Только собрать (без публикации релиза)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: EXE и APK
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Получить код
+        uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Пакеты Android (platform 34, build-tools 34.0.0)
+        shell: pwsh
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Зависимости (сервер, EXE, APK)
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund --prefix server
+          npm ci --no-audit --no-fund --prefix _build/electron
+          npm ci --no-audit --no-fund --prefix _build/mobile
+
+      - name: Тесты сервера
+        shell: pwsh
+        run: node server/test.js
+
+      - name: Записать ключ подписи APK
+        shell: pwsh
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if (-not $env:KS_B64) { throw "секрет ANDROID_KEYSTORE_B64 не задан" }
+          [IO.File]::WriteAllBytes("$env:GITHUB_WORKSPACE\_build\mobile\vitalyaclicker.keystore", [Convert]::FromBase64String($env:KS_B64))
+          Write-Host "ключ подписи записан"
+
+      - name: Собрать и выпустить
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          REL_VERSION: ${{ inputs.version }}
+          REL_NOTES: ${{ inputs.notes }}
+          REL_DRY: ${{ inputs.dry_run }}
+          VC_KS_PASS: ${{ secrets.ANDROID_KS_PASS }}
+          VC_KS_ALIAS: ${{ secrets.ANDROID_KS_ALIAS }}
+        run: |
+          $a = @('tools/release.js')
+          if ($env:REL_VERSION) { $a += @('--version', $env:REL_VERSION) }
+          if ($env:REL_NOTES -and $env:REL_NOTES.Trim()) { $a += @('--notes', $env:REL_NOTES) }
+          if ($env:REL_DRY -eq 'true') { $a += '--no-upload' }
+          Write-Host ("запуск: node " + ($a -join ' '))
+          node @a
+
+      - name: Собранные файлы
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitalyaClicker-сборка
+          if-no-files-found: warn
+          path: |
+            dist/VitalyaClicker.exe
+            dist/VitalyaClicker.apk
