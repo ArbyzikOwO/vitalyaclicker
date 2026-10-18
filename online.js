@@ -543,7 +543,10 @@ async function loadHistory() {
       const when = '<span class="ol-dim">' + hhmm(x.at) + '</span>';
       if (x.type === 'in') return `<div class="ol-item"><span class="grow">${when} от <b>${esc(x.other)}</b></span><span class="ol-pos">+${F(x.amount)}</span></div>`;
       if (x.type === 'out') return `<div class="ol-item"><span class="grow">${when} → <b>${esc(x.other)}</b> <span class="ol-dim">(комиссия ${F(x.fee)})</span></span><span class="ol-neg">−${F(-x.amount)}</span></div>`;
-      return `<div class="ol-item"><span class="grow">${when} 🃏 ${esc(x.note)} · ${esc(x.other)}</span><span class="${x.amount > 0 ? 'ol-pos' : x.amount < 0 ? 'ol-neg' : 'ol-dim'}">${x.amount > 0 ? '+' : x.amount < 0 ? '−' : ''}${F(Math.abs(x.amount))}</span></div>`;
+      const icon = x.type === 'game' ? '🃏' : x.type === 'duel' ? '⚔️' : x.type === 'bank' ? '🏦' : '🪙';
+      const other = x.other ? ' · <b>' + esc(x.other) + '</b>' : '';
+      const label = x.note || (x.type === 'game' ? 'игра' : x.type === 'bank' ? 'банк' : x.type === 'duel' ? 'дуэль' : 'операция');
+      return `<div class="ol-item"><span class="grow">${when} ${icon} ${esc(label)}${other}</span><span class="${x.amount > 0 ? 'ol-pos' : x.amount < 0 ? 'ol-neg' : 'ol-dim'}">${x.amount > 0 ? '+' : x.amount < 0 ? '−' : ''}${F(Math.abs(x.amount))}</span></div>`;
     }).join('') : '<div class="ol-empty">Операций пока нет</div>';
   } catch (e) { box.innerHTML = '<div class="ol-empty">' + esc(e.message) + '</div>'; }
 }

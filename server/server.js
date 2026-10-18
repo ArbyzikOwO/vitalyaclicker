@@ -239,7 +239,7 @@ function duelResolve(t) {
   addXp(A, CFG.xpDuel); addXp(B, CFG.xpDuel);
   if (winner !== null) { stats([A, B][winner]).duelWins++; addXp([A, B][winner], CFG.xpDuelWin); }
   delete db.escrow[t.id]; markDirty();
-  const view = i => ({ id: t.id, game: t.game, bet, myRoll: i === 0 ? rollA : rollB, oppRoll: i === 0 ? rollB : rollA, num: null, color: '', myColor: '', oppColor: '', opp: [A, B][1 - i].display, winner: winner === null ? null : [A, B][winner].display, push: winner === null, youWon: winner === i, reason, payout: payout[i] });
+  const view = i => ({ id: t.id, game: t.game, bet, myRoll: i === 0 ? rollA : rollB, oppRoll: i === 0 ? rollB : rollA, opp: [A, B][1 - i].display, winner: winner === null ? null : [A, B][winner].display, push: winner === null, youWon: winner === i, reason, payout: payout[i] });
   pushTo(A.name, { t: 'duel.result', res: view(0) });
   pushTo(B.name, { t: 'duel.result', res: view(1) });
   userDuel.delete(A.name); userDuel.delete(B.name);
