@@ -82,7 +82,10 @@ cleanup() {
   STOPPED=1
   log 'останавливаю...'
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null
-  [ -n "$NODE_PID" ] && kill "$NODE_PID" 2>/dev/null
+  # pid берём из файла: сервер мог быть перезапущен автообновлением (tools/auto-update.sh)
+  local np="${NODE_PID:-}"
+  [ -f "$LOG_DIR/server.pid" ] && np="$(cat "$LOG_DIR/server.pid" 2>/dev/null || echo "$np")"
+  [ -n "$np" ] && kill "$np" 2>/dev/null
   return 0
 }
 trap 'cleanup; exit 0' INT TERM

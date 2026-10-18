@@ -17,6 +17,75 @@
 
 2. При пересборке: задать переменную окружения `VC_SERVER` перед запуском `prepare.js`.
 
+## Автообновление сервера (сайтовая версия)
+
+Скрипт **`tools/auto-update.sh`** сам держит сайтовую версию свежей: проверяет ветку
+`main` на GitHub, подтягивает новые коммиты (`git pull --ff-only`) и перезапускает
+игровой сервер, когда менялся серверный код. Если менялись только файлы самой игры
+(`index.html`, `online.js`, `online.css`, `skins/`, `audio/`, `version.json`, `icon.png`) —
+перезапуск не нужен, сервер отдаёт их с диска при каждом запросе.
+
+```bash
+tools/auto-update.sh              # крутится, проверяет каждые 2 минуты
+tools/auto-update.sh --once       # один прогон и выход (для cron/systemd)
+tools/auto-update.sh --check      # только сообщить, есть ли обновление
+INTERVAL=60 tools/auto-update.sh  # свой интервал, секунды
+RESTART=0 tools/auto-update.sh    # только git pull, сервер не трогать
+```
+
+Что скрипт **не** делает: не трогает туннель cloudflared (публичный адрес остаётся
+прежним, `server.txt` переписывать не нужно), не затирает локальные правки
+(только fast-forward, никаких `reset --hard`), не касается данных игроков
+(`server/data/`) и секретов — их в git нет. Лог: `tools/logs/auto-update.log`.
+
+Если `git pull` не проходит из-за собственных правок в рабочей копии, скрипт
+ничего не меняет и пишет об этом в лог.
+
+### Автозапуск каждые 2 минуты (systemd)
+
+`/etc/systemd/system/vitalyaclicker-update.service`:
+
+```ini
+[Unit]
+Description=VitalyaClicker — автообновление сервера
+
+[Service]
+Type=oneshot
+User=user
+WorkingDirectory=/home/user/vitalyaclicker
+ExecStart=/home/user/vitalyaclicker/tools/auto-update.sh --once
+```
+
+`/etc/systemd/system/vitalyaclicker-update.timer`:
+
+```ini
+[Unit]
+Description=Проверять обновления VitalyaClicker каждые 2 минуты
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now vitalyaclicker-update.timer
+systemctl list-timers | grep vitalya       # проверить, что таймер встал
+journalctl -u vitalyaclicker-update -n 50  # что было в последних прогонах
+```
+
+Замена `User=user` и путей на свои. Скрипт требует `bash`, `git`, `curl`, `node`
+и права останавливать/запускать процесс сервера.
+
+### Автозапуск через cron
+
+```cron
+* * * * * cd /home/user/vitalyaclicker && RESTART=1 tools/auto-update.sh --once >/dev/null 2>&1
+```
+
 ## Выпуск обновлений
 
 Два способа сборки; как именно собирать — выбирается в админке игры
