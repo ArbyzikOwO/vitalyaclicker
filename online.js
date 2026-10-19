@@ -56,7 +56,7 @@ let sub = 'profile';
 const EMOJI_FALLBACK = ['👍', '🔥', '😂', '😮', '😢', '❤️', '💀', '🪙'];
 let chat = { global: [], rooms: {}, dms: {}, room: 'global', unread: new Set(), reactFor: null };
 let friends = { friends: [], incoming: [], outgoing: [] };
-let cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false };
+let cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false, timers: [], defTurn: 60000, opt: { deck: 36, transfer: true, toEnd: true, turnMs: 60000 } };
 let duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0 };
 let prof = null, top = null, bank = null;
 let arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 };
@@ -656,7 +656,7 @@ function renderFriends() {
 const CARDS_EMOJI = { bj: '🃏', durak: '🃏', war: '🃏', cheat: '🤥', poker: '♠️' };
 const CARDS_RULES = {
   bj: 'Каждому по 2 карты из общей колоды. По очереди берёте карту или останавливаетесь (60 сек на ход). Кто ближе к 21, но не перебрал, — забирает банк. «Блэкджек» с двух карт сильнее обычных 21. Если перебрали все — ставки возвращаются.',
-  durak: 'Подкидной дурак на 2–4 игрока, 36 карт, козырь — нижняя карта колоды. Первый, кто скинул все карты, забирает банк. Подкидывать можно карты того достоинства, что уже на столе; козырь бьёт всё.',
+  durak: 'Подкидной дурак. Настройки стола: колода 36 (до 4 игроков) или 52 (до 6), переводной или без перевода, игра до последнего дурака или до первого вышедшего. Подкидывать можно карты того достоинства, что уже на столе; козырь бьёт всё. Кто при пустой колоде скинул все карты — вышел и забирает банк, последний оставшийся — дурак.',
   war: 'Ручная Пьяница: каждый раунд вы сами открываете верхнюю карту — старшая забирает весь базар. Равные карты — спор, базар растёт. Кто собрал все карты, тот победил; если за 50 раундов карты не разошлись — финальная битва: одна карта от каждого, старшая забирает банк.',
   cheat: 'По 5 карт. По кругу выкладываете 1–3 карты рубашкой вверх, объявляя текущее достоинство (A, 2, 3 … K по кругу). Следующий либо верит, либо не верит и вскрывает: соврали — забираете базар, сказали правду — забирает не поверивший. Кто первым скинул все карты — победил.',
   poker: 'Техасский холдем на 2–6 игроков. У каждого свой стек (ставка стола), блайнды, четыре улицы торговли и вскрытие. Побочные банки учтены — фишки не теряются.'
@@ -667,6 +667,9 @@ async function refreshCards() {
     const r = await req('card.games');
     cards.games = r.games || [];
     cards.rooms = r.rooms || [];
+    cards.timers = r.timers || [];
+    cards.defTurn = r.turnMs || 60000;
+    if (cards.opt.turnMs !== 0 && cards.timers.length && !cards.timers.some(t => t.ms === cards.opt.turnMs)) cards.opt.turnMs = cards.defTurn;
     if (r.room) { cards.room = r.room; cards.game = r.game || null; }
     else if (cards.room && cards.room.state === 'done') { /* оставляем итог партии на экране, пока игрок не закроет */ }
     else { cards.room = null; cards.game = null; }
@@ -676,15 +679,18 @@ async function refreshCards() {
 }
 function cardHTML(c) { if (!c) return '<span class="bj-card back">?</span>'; const red = c.s === '♥' || c.s === '♦'; return '<span class="bj-card' + (red ? ' red' : '') + '">' + esc(c.r) + esc(c.s) + '</span>'; }
 function cardsPres(i, g) { return '<span class="ol-pres' + (g.online && g.online[i] ? ' on' : '') + '"></span>'; }
-function cardsWho(i, g) { return '<b>' + esc(g.names[i] || '?') + '</b>' + (i === g.you ? ' <span class="ol-dim">(вы)</span>' : ''); }
+function cardsWho(i, g) { return '<b>' + esc(g.names[i] || '?') + '</b>' + (i === g.you ? ' <span class="ol-dim">(вы)</span>' : '') + (g.gone && g.gone[i] ? ' <span class="ol-dim">🚪 вышел</span>' : ''); }
 function cardsYouWon(g) {
   if (!g.over || !g.money) return false;
   return g.money[g.you] > g.stake;
 }
+function cardsQuitOk(g) { return !g.over && !(g.gone && g.gone[g.you]); }
 function cardsTimerBar(g) {
   if (g.over) return '';
   const who = g.turn === g.you ? '🎯 Ваш ход' : (g.turn >= 0 && g.names[g.turn] ? '⏳ Ходит ' + esc(g.names[g.turn]) : '⏳ Ждём соперников');
-  return `<div class="ol-duel-readybar"><span class="ol-duel-ready${g.turn === g.you ? ' on' : ''}">${who}</span><span class="ol-dim" id="cardsTime"></span></div>`;
+  const time = g.deadline ? '' : 'без таймера';
+  const quit = cardsQuitOk(g) ? '<button class="ol-btn red" style="padding:5px 12px;margin-left:auto" data-act="cards-quit">🚪 Выйти</button>' : '';
+  return `<div class="ol-duel-readybar"><span class="ol-duel-ready${g.turn === g.you ? ' on' : ''}">${who}</span><span class="ol-dim" id="cardsTime">${time}</span>${quit}</div>`;
 }
 function cardsHint(g) {
   if (g.over) return 'Раздача окончена. Кнопка ниже вернёт вас к столам.';
@@ -705,7 +711,12 @@ function cardsMoneyRows(g) {
 function cardsResultHtml(g) {
   let extra = '';
   if (g.game === 'bj' && g.results) extra = g.results.map((r, i) => `<span class="ol-duel-ready">${cardsWho(i, g)}: ${r.bust ? 'перебор' : r.total + (r.natural ? ' ✨' : '')}</span>`).join('');
-  else if (g.game === 'durak' && g.winner >= 0) extra = `<div class="ol-sub-note">🏆 Кто первым скинул все карты — победил.</div>`;
+  else if (g.game === 'durak') {
+    const w = (g.finished || [])[0];
+    extra = (w != null ? `<div class="ol-sub-note">🏆 Банк забирает <b>${esc(g.names[w])}</b> — скинул(а) все карты первым(ой).</div>` : '')
+      + (g.durak >= 0 ? `<div class="ol-sub-note">🃏 Дурак: <b>${esc(g.names[g.durak])}</b></div>` : '')
+      + ((g.gone || []).some(Boolean) ? '<div class="ol-sub-note">🚪 Часть игроков вышла из партии — их ставки остались в банке.</div>' : '');
+  }
   else if (g.game === 'war') {
     const w = (g.winners || []);
     if (w.length === 1) extra = `<div class="ol-sub-note">🏆 ${esc(g.names[w[0]])} ${g.final ? 'выиграл(а) финальную битву' : 'собрал(а) все карты'}</div>`;
@@ -791,7 +802,7 @@ function durakTableHtml(g) {
     ? g.table.map(p => `<span class="ol-dur-pair">${cardHTML(p.a)}${p.d ? cardHTML(p.d) : ''}</span>`).join('')
     : '<span class="ol-dim">стол пуст</span>';
   const hand = g.hand.map((c, i) => `<span class="ol-pick${cards.pick.indexOf(i) >= 0 ? ' on' : ''}" data-act="cards-sel" data-i="${i}">${cardHTML(c)}</span>`).join('');
-  const rows = g.counts.map((c, i) => `<div class="ol-item"><span class="grow">${cardsPres(i, g)}${cardsWho(i, g)}${i === g.attacker && !g.over ? ' ⚔ атакует' : ''}${i === g.defender && !g.over ? ' 🛡 отбивается' : ''}${i === g.winner ? ' 🏆' : ''}${g.out[i] ? ' · вышел' : ''}</span><span class="acts">🂠 ${c}</span></div>`).join('');
+  const rows = g.counts.map((c, i) => `<div class="ol-item"><span class="grow">${cardsPres(i, g)}${cardsWho(i, g)}${i === g.attacker && !g.over ? ' ⚔ атакует' : ''}${i === g.defender && !g.over ? ' 🛡 отбивается' : ''}${(g.finished || []).indexOf(i) === 0 ? ' 🏆 вышел(ла) первым(ой)' : (g.out && g.out[i] ? ' · вышел(ла)' : '')}${g.durak === i ? ' 🃏 дурак' : ''}</span><span class="acts">🂠 ${c}</span></div>`).join('');
   const b = [];
   if (g.can.attack) b.push(`<button class="ol-btn green" data-act="cards-dur" data-mode="attack"${cards.pick.length ? '' : ' disabled'}>${g.can.first ? '⚔ Атаковать' : '➕ Подкинуть'}</button>`);
   if (g.can.defend) b.push(`<button class="ol-btn green" data-act="cards-dur" data-mode="defend"${cards.pick.length ? '' : ' disabled'}>🛡 Отбить</button>`);
@@ -799,7 +810,7 @@ function durakTableHtml(g) {
   if (g.can.take) b.push('<button class="ol-btn red" data-act="cards-take">🫳 Взять</button>');
   if (g.can.pass) b.push('<button class="ol-btn" data-act="cards-pass">✅ Бито</button>');
   return cardsTimerBar(g)
-    + `<div class="ol-sub-note">Козырь: <b>${esc(g.trump)}</b> · колода: 🂠 ${g.deck} · сброс: ${g.discard} · раунд ${g.round}</div>`
+    + `<div class="ol-sub-note">Козырь: <b>${esc(g.trump)}</b> · колода 52/36: <b>${g.deckSize || 36}</b> · осталось 🂠 ${g.deck} · сброс: ${g.discard} · раунд ${g.round} · ${g.transfer ? 'переводной' : 'без перевода'}${g.toEnd === false ? ' · до первого вышедшего' : ' · до последнего дурака'}</div>`
     + `<div class="ol-dur-table">${table}</div>
        <div class="ol-sub-note">Ваши карты (нажмите, чтобы выбрать):</div><div class="bj-cards">${hand}</div>`
     + `<div class="bj-actions">${b.join('')}</div>`
@@ -840,7 +851,13 @@ function renderCardsGame(d) {
 }
 function cardsUpdateTimer() {
   const g = cards.game, el = $('cardsTime'); if (!g || !el) return;
-  el.textContent = Math.max(0, Math.ceil(((g.deadline || 0) - Date.now()) / 1000)) + ' c';
+  el.textContent = g.deadline ? Math.max(0, Math.ceil((g.deadline - Date.now()) / 1000)) + ' c' : 'без таймера';
+}
+function cardsTurnLabel(ms) { return ms ? (ms / 1000) + ' сек' : 'без таймера'; }
+function cardsOptsText(game, o) {
+  o = o || {};
+  if (game !== 'durak') return '';
+  return 'Колода: <b>' + (Number(o.deck) === 52 ? '52' : '36') + '</b> · ' + (o.transfer === false ? 'без перевода' : 'переводной') + ' · ' + (o.toEnd === false ? 'до первого вышедшего' : 'до последнего дурака') + ' · ';
 }
 function renderCardsLobbyRoom(d, room) {
   const you = room.you || {};
@@ -848,6 +865,7 @@ function renderCardsLobbyRoom(d, room) {
   d.innerHTML = `<div class="ol-box ol-duelbox">
     <div class="ol-rou-head"><h3>${CARDS_EMOJI[room.game] || '🃏'} ${esc(room.title)} · банк 🪙 ${F(room.bet * room.players.length)}</h3><span class="ol-dim">ставка 🪙 ${F(room.bet)} · ${room.players.length} из ${room.max}</span></div>
     <div class="ol-sub-note">${cardsRulesText(room.game)}</div>
+    <div class="ol-sub-note">${cardsOptsText(room.game, room.opts)}Таймер на ход: <b>${cardsTurnLabel(room.turnMs)}</b></div>
     <div class="ol-list">${rows}</div>
     <div class="ol-row" style="margin-top:10px">
       ${room.owner === you.name ? `<button class="ol-btn" data-act="cards-start" style="flex:1" ${room.players.length < room.min ? 'disabled' : ''}>▶️ Начать игру</button>` : '<span class="ol-dim" style="flex:1">⏳ Ждём, когда хозяин начнёт игру</span>'}
@@ -857,20 +875,35 @@ function renderCardsLobbyRoom(d, room) {
 function cardsRulesText(k) { return CARDS_RULES[k] || 'Карточный стол.'; }
 function renderCardsList(d) {
   const sel = cards.sel;
-  const games = cards.games.length ? cards.games : [{ key: 'bj', title: 'Блэкджек', min: 2, max: 4 }, { key: 'durak', title: 'Дурак', min: 2, max: 4 }, { key: 'war', title: 'Пьяница', min: 2, max: 4 }, { key: 'cheat', title: 'Верю-не-верю', min: 2, max: 6 }, { key: 'poker', title: 'Покер (холдем)', min: 2, max: 6 }];
+  const games = cards.games.length ? cards.games : [{ key: 'bj', title: 'Блэкджек', min: 2, max: 4 }, { key: 'durak', title: 'Дурак', min: 2, max: 6 }, { key: 'war', title: 'Пьяница', min: 2, max: 4 }, { key: 'cheat', title: 'Верю-не-верю', min: 2, max: 6 }, { key: 'poker', title: 'Покер (холдем)', min: 2, max: 6 }];
   const g = games.find(x => x.key === sel) || games[0];
   const sw = games.map(x => `<button class="ol-rou-chipbtn${x.key === sel ? ' active' : ''}" data-act="cards-game" data-key="${x.key}">${CARDS_EMOJI[x.key] || ''} ${esc(x.title)}</button>`).join('');
   const mine = cards.rooms.filter(r => r.game === sel);
+  const o = cards.opt;
+  /* у Дурака число игроков зависит от колоды: 36 карт — до 4, 52 — до 6 */
+  const deck = sel === 'durak' ? (Number(o.deck) === 52 ? 52 : 36) : 0;
+  const maxN = sel === 'durak' ? (deck === 52 ? 6 : 4) : g.max;
+  const curMax = Math.min(maxN, Math.max(g.min, Math.floor(Number(o.max) || maxN)));
   const opts = [];
-  for (let i = g.min; i <= g.max; i++) opts.push(`<option value="${i}"${i === g.max ? ' selected' : ''}>${i} игрока</option>`);
+  for (let i = g.min; i <= maxN; i++) opts.push(`<option value="${i}"${i === curMax ? ' selected' : ''}>${i} игрока</option>`);
+  const timers = cards.timers.length ? cards.timers : [{ ms: 15000, label: '15 сек' }, { ms: 30000, label: '30 сек' }, { ms: 60000, label: '60 сек' }, { ms: 120000, label: '120 сек' }, { ms: 0, label: 'без таймера' }];
+  const turnSel = timers.map(t => `<option value="${t.ms}"${t.ms === o.turnMs ? ' selected' : ''}>Таймер: ${esc(t.label)}</option>`).join('');
+  const dur = sel === 'durak' ? `<div class="ol-row" style="margin-top:6px">
+      <select class="ol-in" data-act="cardopt" data-k="deck"><option value="36"${deck === 36 ? ' selected' : ''}>Колода 36 — до 4 игроков</option><option value="52"${deck === 52 ? ' selected' : ''}>Колода 52 — до 6 игроков</option></select>
+      <select class="ol-in" data-act="cardopt" data-k="transfer"><option value="1"${o.transfer ? ' selected' : ''}>Переводной</option><option value="0"${!o.transfer ? ' selected' : ''}>Без перевода</option></select>
+      <select class="ol-in" data-act="cardopt" data-k="toEnd"><option value="1"${o.toEnd ? ' selected' : ''}>До последнего дурака</option><option value="0"${!o.toEnd ? ' selected' : ''}>До первого вышедшего</option></select>
+    </div>` : '';
   d.innerHTML = `<div class="ol-box"><h3>🃏 Карты — все игры в одном месте</h3>
     <div class="ol-sub-note">Блэкджек, Дурак, Пьяница, Верю-не-верю и Покер. Ставка одинакова для всех и идёт из облачного баланса; победитель забирает банк. Все расклады честные — карты тасует сервер.</div>
     <div class="ol-rou-chips" style="margin-bottom:8px">${sw}</div>
     <div class="ol-sub-note">${cardsRulesText(sel)}</div>
-    <div class="ol-row nowrap" style="margin-top:0"><input class="ol-in" id="cardsBet" placeholder="Ставка на каждого, напр. 5M" autocomplete="off">
-      <select class="ol-in" id="cardsMax" style="flex:0 0 120px">${opts.join('')}</select>
-      <button class="ol-btn" data-act="cards-create">➕ Создать стол</button></div></div>
-    <div class="ol-box"><h3>${CARDS_EMOJI[sel] || ''} ${esc(g.title)} · открытые столы</h3><div class="ol-list">${mine.length ? mine.map(r => `<div class="ol-item"><span class="grow"><b>${esc(r.owner)}</b> · 🪙 ${F(r.bet)} · ${r.players}/${r.max}</span><span class="acts">${r.players >= r.max ? '<span class="ol-dim">заполнен</span>' : `<button class="ol-btn" style="padding:7px 14px" data-act="cards-join" data-id="${esc(r.id)}">Сесть</button>`}</span></div>`).join('') : '<div class="ol-empty">Столов нет — создайте свой!</div>'}</div></div>`;
+    <div class="ol-row" style="margin-top:0"><input class="ol-in" id="cardsBet" value="${esc(o.bet || '')}" placeholder="Ставка на каждого, напр. 5M" autocomplete="off">
+      <select class="ol-in" id="cardsMax" style="flex:0 0 110px" data-act="cardopt" data-k="max">${opts.join('')}</select>
+      <select class="ol-in" id="cardsTurn" style="flex:0 0 150px" data-act="cardopt" data-k="turnMs">${turnSel}</select>
+      <button class="ol-btn" data-act="cards-create">➕ Создать стол</button></div>
+    ${dur}
+    <div class="ol-sub-note" style="margin-top:8px">В партии можно выйти в любой момент — ставка при этом не возвращается. Если игрок отключился, сервер доиграет его ход.</div></div>
+    <div class="ol-box"><h3>${CARDS_EMOJI[sel] || ''} ${esc(g.title)} · открытые столы</h3><div class="ol-list">${mine.length ? mine.map(r => `<div class="ol-item"><span class="grow"><b>${esc(r.owner)}</b> · 🪙 ${F(r.bet)} · ${r.players}/${r.max}${r.game === 'durak' ? ' · ' + (Number(r.opts && r.opts.deck) === 52 ? '52' : '36') + ' карт' + (r.opts && r.opts.transfer === false ? ', без перевода' : '') : ''} · ⏱ ${cardsTurnLabel(r.turnMs)}</span><span class="acts">${r.players >= r.max ? '<span class="ol-dim">заполнен</span>' : `<button class="ol-btn" style="padding:7px 14px" data-act="cards-join" data-id="${esc(r.id)}">Сесть</button>`}</span></div>`).join('') : '<div class="ol-empty">Столов нет — создайте свой!</div>'}</div></div>`;
 }
 function renderCards() {
   const d = $('olSub-cards'); if (!d) return;
@@ -887,12 +920,17 @@ async function cardsAct(o) {
 }
 async function cardsCreate() {
   if (needSync()) return;
-  const b = parseAmt(($('cardsBet') || {}).value);
+  const o = cards.opt;
+  o.bet = ($('cardsBet') || {}).value || '';
+  const b = parseAmt(o.bet);
   if (b < cfg.minBet) return T('Минимальная ставка 🪙 ' + F(cfg.minBet));
   if (totalMoney() < b) return T('❌ Не хватает денег');
   const max = Number(($('cardsMax') || {}).value) || 0;
+  o.max = max;
+  const extra = { turnMs: o.turnMs };
+  if (cards.sel === 'durak') extra.opts = { deck: o.deck, transfer: !!o.transfer, toEnd: !!o.toEnd };
   await pushSave(true);
-  try { const r = await req('card.create', { game: cards.sel, bet: b, max }); cards.room = r.room; cards.game = null; cards.pick = []; renderCards(); T('🃏 Стол создан — зовите игроков'); } catch (e) { T('❌ ' + e.message); }
+  try { const r = await req('card.create', Object.assign({ game: cards.sel, bet: b, max }, extra)); cards.room = r.room; cards.game = null; cards.pick = []; renderCards(); T('🃏 Стол создан — зовите игроков'); } catch (e) { T('❌ ' + e.message); }
 }
 async function cardsJoin(id) {
   if (needSync()) return;
@@ -1686,7 +1724,7 @@ async function authSubmit(register) {
 function logout() {
   if (!confirm('Выйти из онлайн-аккаунта? Локальное сохранение останется на этом устройстве.')) return;
   disconnect(); meta.token = ''; meta.name = ''; meta.rev = 0; saveMeta();
-  authed = false; me = null; syncReady = false; chat = { global: [], rooms: {}, dms: {}, room: 'global', unread: new Set(), reactFor: null }; cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false }; duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0 }; prof = null; top = null; bank = null; players = { list: [], q: '', total: 0, online: 0 }; arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 }; sub = 'profile';
+  authed = false; me = null; syncReady = false; chat = { global: [], rooms: {}, dms: {}, room: 'global', unread: new Set(), reactFor: null }; cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false, timers: [], defTurn: 60000, opt: { deck: 36, transfer: true, toEnd: true, turnMs: 60000 } }; duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0 }; prof = null; top = null; bank = null; players = { list: [], q: '', total: 0, online: 0 }; arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 }; sub = 'profile';
   buildPanel(); setStatus();
 }
 function onClick(e) {
@@ -1772,6 +1810,10 @@ function onClick(e) {
     case 'cards-game': cards.sel = el.dataset.key; cards.pick = []; renderCards(); return;
     case 'cards-start': return netCall('card.start', {}).then(() => pullWallet());
     case 'cards-leave': return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
+    case 'cards-quit': {
+      if (!confirm('Выйти из партии? Ставка не возвращается — останется в банке.')) return;
+      return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
+    }
     case 'cards-close': cards.room = null; cards.game = null; cards.pick = []; return refreshCards().then(pullWallet);
     case 'cards-sel': {
       const i = +el.dataset.i, maxSel = (cards.game && cards.game.game === 'cheat') ? 3 : 1;
@@ -1818,6 +1860,16 @@ function onChange(e) {
   const el = e.target;
   if (el.dataset && el.dataset.act === 'auto') { meta.auto = el.checked; saveMeta(); }
   if (el.dataset && el.dataset.act === 'srv') { meta.server = (el.value || '').trim(); meta.manualServer = true; saveMeta(); }
+  if (el.dataset && el.dataset.act === 'cardopt') {
+    const k = el.dataset.k, o = cards.opt;
+    if (k === 'deck') o.deck = Number(el.value) === 52 ? 52 : 36;
+    else if (k === 'transfer') o.transfer = el.value !== '0';
+    else if (k === 'toEnd') o.toEnd = el.value !== '0';
+    else if (k === 'max') o.max = Math.floor(Number(el.value)) || 0;
+    else if (k === 'turnMs') o.turnMs = Math.floor(Number(el.value)) || 0;
+    if ($('cardsBet')) o.bet = $('cardsBet').value || '';
+    renderCards();
+  }
 }
 function onKey(e) {
   if (e.key === 'Escape') return closeProfile();

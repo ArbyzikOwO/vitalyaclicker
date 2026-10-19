@@ -136,6 +136,17 @@ const poker = {
   },
   done(st) { return st.over; },
   turn(st) { return st.over ? -1 : st.turn; },
+  /* игрок покинул стол — это сброс: его фишки остаются в банке */
+  leave(st, i) {
+    if (st.over || st.folded[i]) return;
+    st.folded[i] = true; st.acted[i] = true;
+    pushLog(st, st.names[i] + ': покинул(а) стол');
+    if (st.turn === i) { advance(st); return; }
+    let alive = 0, last = -1;
+    for (let k = 0; k < st.n; k++) if (!st.folded[k]) { alive++; last = k; }
+    if (alive <= 1) return finish(st, [last]);
+    if (!pending(st).length) return nextStreet(st);
+  },
   payouts(st) {
     const out = st.names.map((_, i) => st.stacks[i] + st.won[i]);
     return out;

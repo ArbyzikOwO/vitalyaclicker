@@ -59,15 +59,15 @@ function authTry(token, version) {
 
   /* ---- помощники для карточных столов ---- */
   const RANKS36 = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-  const rv = x => RANKS36.indexOf(x) + 6;
-  /* гоняем партию за игроков, пока игра сама не закончится */
+  const RANKS52 = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  const rv = x => RANKS52.indexOf(x) + 2;
+  /* гоняем партию за игроков, пока игра сама не закончится (P[0] — хозяин стола) */
   async function driveCards(P, gesture, maxMoves) {
     let guard = 0;
     while (guard++ < (maxMoves || 200)) {
-      let cur = null;
-      for (const cl of P) { const m = cl.last('card.state'); if (m && m.game && !m.game.over) { cur = cl; break; } }
-      if (!cur) break;
-      const i = cur.last('card.state').game.turn;
+      const ref = P[0].last('card.state');
+      if (!ref || !ref.game || ref.game.over) break;
+      const i = ref.game.turn;
       if (i < 0) break;
       const mine = P[i].last('card.state');
       if (!mine || !mine.game || mine.game.over) break;
@@ -79,13 +79,13 @@ function authTry(token, version) {
     }
   }
   /* собрать стол, сыграть партию и проверить, что деньги сошлись */
-  async function cardMatch(game, P, bet, gesture, moves) {
+  async function cardMatch(game, P, bet, gesture, moves, extra) {
     for (const cl of P) { try { await cl.req('card.leave'); } catch (e) { } }
     await sleep(60);
     for (const cl of P) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
     const start = [];
     for (const cl of P) start.push((await cl.req('wallet.pending')).avail);
-    const cr = await P[0].req('card.create', { game, bet });
+    const cr = await P[0].req('card.create', Object.assign({ game, bet }, extra || {}));
     if (!cr.ok) return { ok: false, err: cr.err };
     for (let k = 1; k < P.length; k++) { const j = await P[k].req('card.join', { room: cr.room.id }); if (!j.ok) return { ok: false, err: j.err }; }
     const st0 = await P[0].req('card.start');
@@ -342,6 +342,55 @@ function authTry(token, version) {
   ok(poker.okSum && poker.pot === 60000, 'покер: банк 60000 и деньги сходятся');
   ok(poker.g.street === 'river' || poker.g.street !== '', 'покер: улицы дошли до конца');
   ok(!(await A.req('card.create', { game: 'нет-такой', bet: 50000 })).ok, 'неизвестная игра отклонена');
+
+  console.log('— Карты: настройки Дурака (колода, перевод, партия)');
+  const mkr = s => { const f = mulberry32(s); return x => Math.floor(f() * x); };
+  ok(CL.V('2') < CL.V('6') && CL.V('6') < CL.V('10') && CL.V('K') < CL.V('A'), 'шкала достоинств 2 … A работает для колоды 52');
+  ok(CL.durak.maxFor({ deck: 36 }) === 4 && CL.durak.maxFor({ deck: 52 }) === 6, 'дурак: 36 карт — до 4 игроков, 52 — до 6');
+  const d52 = CL.durak.make(['A', 'B'], mkr(7), { deck: 52, transfer: false });
+  ok(d52.deck.length === 40 && d52.hand[0].length === 6, 'дурак 52: по 6 карт каждому, колода 40');
+  ok(d52.opts.transfer === false, 'дурак: перевод отключается настройкой');
+  ok(CL.durak.view(d52, d52.defender).can.transfer === false, 'дурак: без перевода кнопка перевода недоступна');
+  const fast = CL.durak.make(['A', 'B'], mkr(9), { toEnd: false });
+  ok(fast.opts.toEnd === false, 'дурак: режим «до первого вышедшего» принят');
+  const d52m = await cardMatch('durak', [A, B], 20000, durakGesture, 400, { opts: { deck: 52, transfer: false }, turnMs: 30000 });
+  ok(d52m.ok && d52m.g.over, 'дурак на 52 картах без перевода доигран (' + (d52m.g.log.slice(-1)[0] || '') + ')');
+  ok(d52m.okSum && d52m.pot === 40000, 'дурак на 52: банк 40000 и деньги сходятся');
+  ok(d52m.g.opts && d52m.g.opts.deck === 52 && d52m.g.opts.transfer === false && d52m.g.deckSize === 52, 'настройки стола пришли клиенту');
+
+  console.log('— Карты: достойный выход из партии');
+  for (const cl of [A, B, C2]) { try { await cl.req('card.leave'); } catch (e) { } }
+  await sleep(80);
+  const clamp = await A.req('card.create', { game: 'durak', bet: 20000, max: 6 });
+  ok(clamp.ok && clamp.room.max === 4, 'дурак на 36 картах: стол всё равно ограничен 4 игроками');
+  await A.req('card.leave');
+  await sleep(60);
+  for (const cl of [A, B, C2]) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+  const qBefore = [(await A.req('wallet.pending')).avail, (await B.req('wallet.pending')).avail, (await C2.req('wallet.pending')).avail];
+  const qr = await A.req('card.create', { game: 'durak', bet: 20000, opts: { toEnd: false }, turnMs: 0 });
+  ok(qr.ok && qr.room.turnMs === 0 && qr.room.opts.toEnd === false, 'стол дурака: таймер «без ограничения» + партия до первого вышедшего');
+  await B.req('card.join', { room: qr.room.id });
+  await C2.req('card.join', { room: qr.room.id });
+  ok((await A.req('card.start')).ok, 'партия дурака началась');
+  await sleep(140);
+  ok(A.last('card.state') && A.last('card.state').game && !A.last('card.state').game.over, 'партия идёт');
+  ok((await B.req('card.leave')).ok, 'игрок вышел из партии посреди игры');
+  await sleep(140);
+  ok(B.last('card.gone') != null, 'вышедший вернулся к списку столов');
+  const gq = A.last('card.state').game;
+  ok(gq && gq.gone && gq.gone[1] === true, 'остальные видят, что игрок вышел');
+  ok((await B.req('card.create', { game: 'bj', bet: 20000 })).ok, 'вышедший может сесть за другой стол');
+  await B.req('card.leave');
+  await driveCards([A, B, C2], durakGesture, 400);
+  await sleep(200);
+  const gq2 = A.last('card.state').game;
+  ok(gq2 && gq2.over, 'партия после выхода доиграна');
+  const qa = await A.req('wallet.pending'), qb = await B.req('wallet.pending'), qc = await C2.req('wallet.pending');
+  const qNets = [qa.avail - qBefore[0], qb.avail - qBefore[1], qc.avail - qBefore[2]];
+  ok(qNets.reduce((s, x) => s + x, 0) === 0, 'выход из партии: деньги не создаются и не пропадают');
+  ok(gq2.money && gq2.money.reduce((s, x) => s + x, 0) === 60000, 'банк 60000 разошёлся полностью');
+  ok(qNets[1] <= 0, 'вышедший ничего не заработал — ставка осталась в банке');
+  for (const [cl, p] of [[A, qa], [B, qb], [C2, qc]]) await cl.req('wallet.ack', { ids: p.items.map(i => i.id) });
 
   console.log('— Опыт, профиль, лидерборд');
   await A.req('wallet.pending').then(x => A.req('wallet.ack', { ids: x.items.map(i => i.id) }));

@@ -523,14 +523,34 @@ const CARD_ORDER = ['bj', 'durak', 'war', 'cheat', 'poker'];
 const cardRooms = new Map();   // id -> {id, game, mod, bet, max, owner, players[], state, g, timer, deadline}
 const userCard = new Map();    // name -> id
 const CARD_LOBBY_MS = 30 * 60 * 1000;   // пустой стол закрывается
-const CARD_TURN_MS = 60000;             // время на ход
+const CARD_TURN_MS = 60000;             // время на ход (если таймер не задан столом)
 const CARD_DONE_MS = 180000;            // сколько держим результат на экране
+const CARD_TIMERS = [15000, 30000, 60000, 120000, 0];   // таймер на ход: 0 — без ограничения
+/* настройки стола от клиента: колода/перевод/партия (Дурак) + таймер на ход */
+function cardOpts(game, m) {
+  const src = (m && m.opts && typeof m.opts === 'object') ? m.opts : {};
+  const o = {};
+  if (game === 'durak') {
+    o.deck = Number(src.deck) === 52 ? 52 : 36;
+    o.transfer = src.transfer !== false;
+    o.toEnd = src.toEnd !== false;
+  }
+  return o;
+}
+function cardTurnMs(m) {
+  const ms = Math.floor(Number(m && m.turnMs));
+  return CARD_TIMERS.indexOf(ms) >= 0 ? ms : CARD_TURN_MS;
+}
+function cardMaxFor(game, opts) {
+  const mod = CARD_GAMES[game].mod;
+  return mod.maxFor ? mod.maxFor(opts) : mod.max;
+}
 
 function cardRoomOf(name) { const id = userCard.get(name); return id ? cardRooms.get(id) || null : null; }
 function cardLobby() {
   return [...cardRooms.values()].filter(r => r.state === 'lobby').map(r => ({
     id: r.id, game: r.game, title: r.mod.title, bet: r.bet, max: r.max, min: r.mod.min,
-    players: r.players.length, owner: getUser(r.owner).display
+    players: r.players.length, owner: getUser(r.owner).display, opts: r.opts || {}, turnMs: r.turnMs
   }));
 }
 function pushCardLobby() { pushAll({ t: 'card.rooms', rooms: cardLobby() }); }
@@ -538,11 +558,12 @@ function cardView(rm, name) {
   return {
     id: rm.id, game: rm.game, title: rm.mod.title, bet: rm.bet, max: rm.max, min: rm.mod.min,
     owner: getUser(rm.owner).display, state: rm.state, deadline: rm.deadline || 0,
+    turnMs: rm.turnMs, opts: rm.opts || {}, hardMax: cardMaxFor(rm.game, rm.opts),
     you: { name: getUser(name).display, owner: rm.owner === name },
-    players: rm.players.map(p => ({ name: getUser(p).display, user: p, online: isOnline(p), owner: p === rm.owner }))
+    players: rm.players.map(p => ({ name: getUser(p).display, user: p, online: isOnline(p), owner: p === rm.owner, gone: rm.gone.has(p) }))
   };
 }
-function cardPush(rm) { for (const p of rm.players) pushTo(p, { t: 'card.room', room: cardView(rm, p) }); }
+function cardPush(rm) { for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'card.room', room: cardView(rm, p) }); }
 function cardGameView(rm, name) {
   const v = rm.mod.view(rm.g, rm.players.indexOf(name));
   v.id = rm.id; v.stake = rm.bet; v.title = rm.mod.title;
@@ -550,12 +571,15 @@ function cardGameView(rm, name) {
   v.turn = rm.mod.turn(rm.g);
   v.names = rm.players.map(p => getUser(p).display);
   v.online = rm.players.map(p => isOnline(p));
+  v.gone = rm.players.map(p => rm.gone.has(p));
   v.you = rm.players.indexOf(name);
   v.deadline = rm.deadline || 0;
+  v.turnMs = rm.turnMs;
+  v.opts = rm.opts || {};
   v.money = rm.payouts || null;
   return v;
 }
-function cardPushGame(rm) { for (const p of rm.players) pushTo(p, { t: 'card.state', game: cardGameView(rm, p) }); }
+function cardPushGame(rm) { for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'card.state', game: cardGameView(rm, p) }); }
 function cardArmLobby(rm) {
   clearTimeout(rm.timer);
   rm.timer = setTimeout(() => { if (rm.state === 'lobby') cardClose(rm, 'Стол закрыт: никто не собрался'); }, CARD_LOBBY_MS);
@@ -573,10 +597,15 @@ function cardClose(rm, why) {
 }
 function cardArmTurn(rm) {
   clearTimeout(rm.timer); rm.timer = null;
+  rm.deadline = 0;
   const i = rm.mod.turn(rm.g);
   if (i < 0) return;
-  const ms = rm.mod.delay ? rm.mod.delay(rm.g, CARD_TURN_MS) : CARD_TURN_MS;
-  rm.deadline = now() + ms;
+  const manual = rm.turnMs === 0;   /* «без таймера» — ждём игрока, сколько нужно */
+  const who = rm.players[i];
+  if (manual && who && !rm.gone.has(who) && isOnline(who)) return;
+  const base = manual ? CARD_TURN_MS : rm.turnMs;
+  const ms = rm.mod.delay ? rm.mod.delay(rm.g, base) : base;
+  if (!manual) rm.deadline = now() + ms;
   rm.timer = setTimeout(() => { if (rm.state === 'play') { cardAuto(rm); cardAfter(rm); } }, ms + 200);
   if (rm.timer.unref) rm.timer.unref();
 }
@@ -612,20 +641,22 @@ function cardAuto(rm) {
 function cardAfter(rm) {
   if (rm.state !== 'play') return;
   if (rm.mod.done(rm.g)) return cardSettle(rm);
+  cardArmTurn(rm);      /* сначала взводим таймер хода — дедлайн должен попасть в раздачу вида */
   cardPushGame(rm);
-  cardArmTurn(rm);
 }
 function cardStart(rm) {
   if (rm.state !== 'lobby') throw new Error('Игра уже идёт');
   if (rm.players.length < rm.mod.min) throw new Error('Нужно минимум ' + rm.mod.min + ' игрока');
+  const hardMax = cardMaxFor(rm.game, rm.opts);
+  if (rm.players.length > hardMax) throw new Error('За этот стол могут сесть максимум ' + hardMax + ' игрока');
   for (const p of rm.players) if (avail(getUser(p)) < rm.bet) throw new Error('У игрока ' + getUser(p).display + ' не хватает денег');
   clearTimeout(rm.timer); rm.timer = null;
   const rnd = n => crypto.randomInt(n);
   const names = rm.players.map(p => getUser(p).display);
   db.escrow[rm.id] = { bet: rm.bet, players: rm.players.slice(), at: now() };
   for (const p of rm.players) addPending(getUser(p), 'debit', rm.bet, rm.mod.title + ': ставка');
-  rm.state = 'play'; rm.payouts = null; rm.deadline = 0;
-  rm.g = rm.game === 'poker' ? rm.mod.make(names, rm.bet, rnd) : rm.mod.make(names, rnd);
+  rm.state = 'play'; rm.payouts = null; rm.deadline = 0; rm.gone = new Set();
+  rm.g = rm.game === 'poker' ? rm.mod.make(names, rm.bet, rnd) : rm.mod.make(names, rnd, rm.opts);
   markDirty();
   cardPush(rm);
   cardAfter(rm);
@@ -635,6 +666,20 @@ function cardSettle(rm) {
   clearTimeout(rm.timer); rm.timer = null;
   const pay = rm.mod.payouts(rm.g, rm.bet);
   rm.payouts = pay.map(x => Math.max(0, Math.floor(Number(x) || 0)));
+  /* деньги не должны исчезать: если движок вернул меньше банка — остаток победителю */
+  const potSum = rm.bet * rm.players.length;
+  const gotSum = rm.payouts.reduce((a, b) => a + b, 0);
+  if (gotSum < potSum) {
+    const left = potSum - gotSum;
+    let k = 0;
+    for (let i = 1; i < rm.payouts.length; i++) if (rm.payouts[i] > rm.payouts[k]) k = i;
+    if (rm.payouts[k] > 0) rm.payouts[k] += left;
+    else {
+      const n = rm.payouts.length || 1, bonus = Math.floor(left / n);
+      let rem = left - bonus * n;
+      for (let i = 0; i < rm.payouts.length; i++) rm.payouts[i] = bonus + (rem-- > 0 ? 1 : 0);
+    }
+  }
   const winners = [];
   for (let i = 0; i < rm.players.length; i++) {
     const U = getUser(rm.players[i]); if (!U) continue;
@@ -654,9 +699,25 @@ function cardSettle(rm) {
   const t = setTimeout(() => cardRooms.delete(rm.id), CARD_DONE_MS);
   if (t.unref) t.unref();
 }
-function cardLeave(name, why) {
+function cardLeave(name, why, force) {
   const rm = cardRoomOf(name); if (!rm) return false;
-  if (rm.state === 'play') throw new Error('Партия идёт — её нужно доиграть');
+  /* партия идёт: выход = «сдаться» — карты уходят из игры, ставка остаётся в банке */
+  if (rm.state === 'play') {
+    if (!force) throw new Error('Партия идёт — её нужно доиграть');
+    const i = rm.players.indexOf(name);
+    if (i >= 0 && !rm.gone.has(name)) {
+      rm.gone.add(name);
+      if (typeof rm.mod.leave === 'function') { try { rm.mod.leave(rm.g, i); } catch (e) { } }
+    }
+    userCard.delete(name);
+    pushTo(name, { t: 'card.gone' });
+    pushTo(name, { t: 'toast', text: '🚪 Вы вышли из партии — ставка не возвращается' });
+    for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'toast', text: '🚪 ' + getUser(name).display + ' вышел(ла) из партии' });
+    markDirty();
+    cardAfter(rm);
+    pushCardLobby();
+    return true;
+  }
   clearTimeout(rm.timer); rm.timer = null;
   userCard.delete(name);
   dropFrom(rm.players, name);
@@ -668,7 +729,8 @@ function cardLeave(name, why) {
 }
 function cardOnDisconnect(name) {
   const rm = cardRoomOf(name); if (!rm) return;
-  if (rm.state === 'lobby') { cardPush(rm); pushCardLobby(); } else cardPushGame(rm);
+  if (rm.state === 'lobby') { cardPush(rm); pushCardLobby(); }
+  else { cardArmTurn(rm); cardPushGame(rm); }   /* «без таймера» — доигрываем за ушедшего */
 }
 /* бан/кик прямо за столом: возвращаем ставки и закрываем стол */
 function cardKick(name) {
@@ -684,13 +746,16 @@ function cardKick(name) {
   }
   try { cardLeave(name, false); } catch (e) { }
 }
-function cardMake(u, game, bet, max) {
+function cardMake(u, game, bet, max, opts, turnMs) {
   const def = CARD_GAMES[game];
   if (!def) throw new Error('Неизвестная игра');
+  const hardMax = cardMaxFor(game, opts);
   const rm = {
     id: nid('K'), game: game, mod: def.mod, bet: bet,
-    max: Math.max(def.mod.min, Math.min(def.mod.max, Math.floor(Number(max) || def.mod.max))),
-    owner: u.name, players: [u.name], state: 'lobby', g: null, timer: null, deadline: 0, payouts: null
+    max: Math.max(def.mod.min, Math.min(hardMax, Math.floor(Number(max) || hardMax))),
+    opts: opts || {}, turnMs: turnMs == null ? CARD_TURN_MS : turnMs,
+    owner: u.name, players: [u.name], state: 'lobby', g: null, timer: null, deadline: 0,
+    payouts: null, gone: new Set()
   };
   cardRooms.set(rm.id, rm); userCard.set(u.name, rm.id);
   markDirty(); cardArmLobby(rm); pushCardLobby();
@@ -1064,6 +1129,8 @@ const handlers = {
     const rm = cardRoomOf(ctx.u.name);
     return {
       games: CARD_ORDER.map(k => ({ key: k, title: CARD_GAMES[k].mod.title, min: CARD_GAMES[k].mod.min, max: CARD_GAMES[k].mod.max })),
+      timers: CARD_TIMERS.map(ms => ({ ms: ms, label: ms ? (ms / 1000) + ' сек' : 'без таймера' })),
+      turnMs: CARD_TURN_MS,
       rooms: cardLobby(),
       room: rm ? cardView(rm, ctx.u.name) : null,
       game: rm && rm.g ? cardGameView(rm, ctx.u.name) : null
@@ -1079,7 +1146,8 @@ const handlers = {
     const bet = parseAmount(m.bet);
     if (bet < CFG.minBet) throw new Error('Минимальная ставка: ' + CFG.minBet);
     if (avail(u) < bet) throw new Error('Недостаточно денег в облаке для такой ставки');
-    const rm = cardMake(u, m.game, bet, m.max);
+    const opts = cardOpts(m.game, m);
+    const rm = cardMake(u, m.game, bet, m.max, opts, cardTurnMs(m));
     return { room: cardView(rm, u.name) };
   },
   async 'card.join'(ctx, m) {
@@ -1098,7 +1166,7 @@ const handlers = {
     cardPush(rm); pushCardLobby();
     return { room: cardView(rm, u.name) };
   },
-  async 'card.leave'(ctx) { cardLeave(ctx.u.name, false); return {}; },
+  async 'card.leave'(ctx) { cardLeave(ctx.u.name, false, true); return {}; },
   async 'card.start'(ctx) {
     const u = ctx.u, rm = cardRoomOf(u.name);
     if (!rm) throw new Error('Вы не за столом');
