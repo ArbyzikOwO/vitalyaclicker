@@ -41,9 +41,9 @@
   let checkedOnce = false;
 
   function detectPlatform() {
-    if (window.vcUpdater) return 'win';
     if (/android/i.test(navigator.userAgent)) return 'android';
     if (/linux/i.test(navigator.userAgent)) return 'linux';
+    if (window.vcUpdater) return 'win';
     return 'web';
   }
   const parts = v => String(v == null ? '' : v).replace(/^v/i, '').split(/[.\-+_]/).map(x => parseInt(x, 10) || 0);
@@ -179,16 +179,27 @@
         if (!silent) toast('✅ У вас последняя версия v' + LOCAL);
         return null;
       }
-      const assetName = (j.assets && j.assets[PLATFORM]) || DEFAULT_ASSET[PLATFORM] || '';
+      const listed = (j.assets && j.assets[PLATFORM]) || '';
+      const assetName = listed || DEFAULT_ASSET[PLATFORM] || '';
       release = {
         version: ver,
         tag_name: 'v' + ver,
         notes: String(j.notes || ''),
         assetName: assetName,
+        listed: !!listed,
         download: assetName ? DL_BASE + assetName : REL_PAGE,
         html_url: REL_PAGE,
         assets: assetName ? [{ name: assetName }] : []
       };
+      /* Если в релизе нет файла для нашей платформы (например, обновление
+         собрали только для Windows) — игру не запираем: вышлем подсказку,
+         а окно обновления покажем по кнопке. */
+      if (FORCED && !release.listed) {
+        checkedOnce = true;
+        banner(false);
+        if (!silent) toast('ℹ️ Вышла v' + ver + ', но файл для вашей системы ещё не выложен');
+        return null;
+      }
       checkedOnce = true;
       banner(true, 'v' + ver);
       if (FORCED) openBox();            /* обязательное обновление — окно не закрывается */
@@ -208,7 +219,9 @@
       ? 'Игра скачает обновление и перезапустится автоматически.'
       : PLATFORM === 'android'
         ? 'Откроется загрузка APK — подтвердите установку (разрешите установку из этого источника).'
-        : 'Откроется страница релиза — скачайте новую версию.';
+        : PLATFORM === 'linux'
+          ? 'Откроется загрузка AppImage. Скачанный файл нужно сделать исполняемым: chmod +x VitalyaClicker.AppImage'
+          : 'Откроется страница релиза — скачайте новую версию.';
     const notes = r.notes.trim() ? h(r.notes.slice(0, 1500)) : '<span style="opacity:.7">Обновление игры.</span>';
     const o = box('<div class="vc-card">'
       + '<h3>' + (FORCED ? '⛔ Нужно обновиться' : '🚀 Доступно обновление') + '</h3>'
@@ -234,10 +247,13 @@
     info = info || {};
     const ver = String(info.version || '').trim().replace(/^v/i, '');
     if (!ver || cmpVer(ver, LOCAL) <= 0) return false;
-    const assetName = info.assetName || (release && release.assetName) || DEFAULT_ASSET[PLATFORM] || '';
+    /* файл для платформы берём из релиза; если его нет — окно всё равно
+       покажем, но кнопка поведёт на страницу релиза (запасной путь) */
+    const assetName = (info.assets && info.assets[PLATFORM]) || (release && release.listed ? release.assetName : '') || DEFAULT_ASSET[PLATFORM] || '';
     release = {
       version: ver, tag_name: 'v' + ver, notes: String(info.notes || ''),
       assetName: assetName,
+      listed: !!(info.assets && info.assets[PLATFORM]),
       download: assetName ? DL_BASE + assetName : REL_PAGE,
       html_url: REL_PAGE, assets: assetName ? [{ name: assetName }] : []
     };
@@ -301,6 +317,16 @@
       setMsgHtml('Если загрузка не открылась сама — тапните по кнопке:'
         + '<br><a class="vc-link" href="' + h(r.download) + '" target="_system" rel="noopener">⬇️ Скачать ' + h(r.assetName) + '</a>'
         + (FORCED ? '<br><span style="opacity:.7">После установки откройте игру заново.</span>' : '<br><span style="opacity:.7">«Позже» — установить в другой раз.</span>'));
+      return;
+    }
+
+    /* Linux: AppImage качается браузером, потом chmod +x и запуск */
+    if (PLATFORM === 'linux' && r.assetName) {
+      setMsg('Открываю загрузку AppImage…');
+      try { window.open(r.download, '_blank'); } catch (e) {}
+      setMsgHtml('Если загрузка не открылась — нажмите:'
+        + '<br><a class="vc-link" href="' + h(r.download) + '" target="_blank" rel="noopener">⬇️ Скачать ' + h(r.assetName) + '</a>'
+        + '<br><span style="opacity:.7">Затем: chmod +x ' + h(r.assetName) + ' и запустите файл.</span>');
       return;
     }
 

@@ -14,6 +14,12 @@ const STAGE = path.join(__dirname, 'stage');
 const ICON = path.join(__dirname, 'assets', 'icon.png');
 const TITLE = 'VitalyaClicker';
 
+/* --- ускорение запуска ---
+   Отключаем подсчёт перекрытия окна: лишняя работа при старте на Windows. */
+try {
+  if (process.platform === 'win32') app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+} catch (e) {}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -69,12 +75,14 @@ function createWindow(port) {
     backgroundColor: '#0b0e14',
     autoHideMenuBar: true,
     icon: ICON,
-    show: false,
+    /* окно показываем сразу: ждать «ready-to-show» долго — игра тяжёлая,
+       а тёмный фон всё равно закрывает первую отрисовку */
+    show: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, preload: path.join(__dirname, 'preload.js') }
   });
 
-  win.once('ready-to-show', () => win.show());
   win.loadURL('http://127.0.0.1:' + port + '/index.html');
+  win.focus();
 
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
 
@@ -167,6 +175,8 @@ const UPDATE_CMD = [
 ].join('\r\n') + '\r\n';
 
 ipcMain.handle('vc:install', async (e, arg) => {
+  /* автоустановка EXE — только Windows: в Linux AppImage качается вручную */
+  if (process.platform !== 'win32') throw new Error('Автоустановка доступна только в Windows-сборке');
   const url = arg && arg.url;
   if (!url || !/^https:\/\//i.test(url)) throw new Error('Некорректная ссылка обновления');
   const dir = app.getPath('temp');

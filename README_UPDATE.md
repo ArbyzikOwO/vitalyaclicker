@@ -68,7 +68,7 @@
 | `window.VC_SERVER` | адрес сервера по умолчанию (fallback) |
 | `window.VC_REPO` | `ArbyzikOwO/vitalyaclicker` |
 | `window.VC_VERSION` | версия игры из `version.json` |
-| `window.VC_PLATFORM` | `win` или `android` |
+| `window.VC_PLATFORM` | `win`, `android`, `linux` или `web` |
 
 ---
 
@@ -177,6 +177,7 @@ node tools\release.js --notes "Что нового: ..."
 node tools\release.js --no-upload      :: только собрать, без публикации
 node tools\release.js --upload-only    :: только выложить уже собранное из dist
 node tools\release.js --skip-apk       :: только EXE
+node tools\release.js --linux          :: Linux AppImage (запускать на Linux)
 ```
 
 Актуальный адрес сервера берётся из `tools/server.txt`, а если файла нет — из `server.txt` в корне
@@ -197,6 +198,25 @@ node tools\release.js --skip-apk       :: только EXE
 
 Прогресс уходит в stdout строками `PROGRESS: ...`, сервер пересылает их
 игрокам; `DONE: <версия>` — успех, `FAIL: <причина>` — ошибка.
+
+### Linux-клиент (AppImage)
+
+Electron не умеет собирать Linux-бинарник на Windows, поэтому AppImage
+собирается на Linux-машине (та же, где живёт сервер):
+
+```bash
+cd _build/electron && npm install && cd ../..
+node tools/release.js --linux --version 1.1.0
+```
+
+* файл всегда называется `VitalyaClicker.AppImage` (по этому имени клиенты
+  Linux находят обновление в последнем релизе, как EXE и APK);
+* `prepare.js` получает `VC_TARGET=linux` — в сборку зашивается
+  `window.VC_PLATFORM = 'linux'`;
+* на Windows/Linux собираются только свои файлы: на Windows — EXE и APK,
+  на Linux — AppImage. В `version.json` пишутся только те файлы, которые
+  реально попали в релиз, чтобы игрок другой платформы не получил ссылку
+  на несуществующий файл (и не оказался заперт обязательным обновлением).
 
 ---
 
@@ -226,7 +246,13 @@ node tools\release.js --skip-apk       :: только EXE
 |---|---|
 | **EXE (Windows)** | Игра скачивает `releases/latest/download/VitalyaClicker.exe` и **сама перезапускается**. Замену делает маленький служебный `.cmd` в `%TEMP%`: он в цикле повторяет `copy`, пока файл занят запущенной игрой (копия не проходит, пока процесс жив — это и есть ожидание выхода), затем запускает новую версию и удаляет себя. Никаких `tasklist`/`timeout`/конвейеров — у процесса, запущенного из игры, может не быть консоли, и такие команды виснут. |
 | **APK (Android)** | Открывается загрузка APK в системном браузере, Android предлагает установить (подпись та же, поэтому обновление ставится поверх). Если автоматическое открытие не сработало, в окне появляется кнопка **«⬇️ Скачать VitalyaClicker.apk»** (`target="_system"`) — по ней можно просто тапнуть. |
+| **AppImage (Linux)** | Открывается загрузка `releases/latest/download/VitalyaClicker.AppImage` в браузере; в окне остаётся ссылка на файл и напоминание `chmod +x`. |
 | **Браузер** | Открывается страница релиза `releases/latest`. |
+
+Обязательное окно показывается только если в `version.json` этого релиза есть файл
+для текущей платформы (`assets[PLATFORM]`). Если обновление собрали без вашей
+платформы, игра не запирается: приходит только сообщение и баннер — иначе игрока
+некуда было бы отправить за файлом.
 
 Проверка происходит при запуске (через 4 секунды) и далее каждые 3 минуты, а
 заблокированный экран обновления перерисовывается каждые 20 секунд.

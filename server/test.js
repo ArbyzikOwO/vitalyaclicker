@@ -151,6 +151,12 @@ function authTry(token, version) {
   ok(!(await post('/api/login', { name: 'Alice', password: 'wrong' })).ok, 'неверный пароль отклонён');
   const A = await client(ra.token), B = await client(rb.token), C = await client(rc.token);
 
+  console.log('— Сессия (вход помнится неделю)');
+  const sess = await authTry(ra.token);
+  ok(sess.reply && sess.reply.ok && sess.reply.sessionUntil > Date.now() + 6 * 24 * 3600 * 1000 && sess.reply.sessionUntil <= Date.now() + 8 * 24 * 3600 * 1000, 'сессия продлена примерно на неделю');
+  const dead = await authTry('deadbeef');
+  ok(!(dead.reply && dead.reply.ok), 'неизвестный токен не пускает в игру');
+
   console.log('— Облачное сохранение');
   let r = await A.req('save.put', { main: makeSave(1e9), garden: JSON.stringify({ money: 5e8 }), baseRev: 0 });
   ok(r.ok && r.rev === 1 && r.avail === 1.5e9, 'save.put принят, баланс = клик + сад (1.5e9)');
@@ -208,25 +214,32 @@ function authTry(token, version) {
   ok((await post('/api/login', { name: 'Carol', password: 'secret3' })).ok, 'после разбана вход работает');
   ok(!(await A.req('admin.ban', { name: 'Alice' })).ok, 'нельзя применить бан к себе');
 
-  console.log('— ParrotAI (попугай в общем чате)');
+  console.log('— ParrotAI (отдельный чат с ботом)');
   r = await B.req('admin.parrot'); ok(!r.ok, 'настройки ParrotAI доступны только админам');
   r = await A.req('admin.parrot'); ok(r.ok && r.status && r.status.loaded, 'модель ParrotAI загружена сервером');
   ok(typeof r.cfg.botName === 'string' && r.cfg.botName.length > 0, 'настройки бота отдаются клиенту');
   r = await A.req('admin.parrot', { on: true, cfg: { botName: 'ПопугайТест', trigger: 'попугай', delaySec: 0, askQuestion: true, answerAll: false } });
   ok(r.ok && r.on && r.cfg.botName === 'ПопугайТест' && r.cfg.delaySec === 0, 'включение бота и сохранение настроек');
+  /* бот больше не пишет в общий чат */
+  const globBot = (await A.req('chat.history', {})).msgs.filter(m => m.bot).length;
   await A.req('chat.send', { text: 'попугай привет' });
   await sleep(1200);
-  const hist = (await A.req('chat.history', {})).msgs;
-  const botCount = hist.filter(m => m.bot).length;
-  ok(botCount >= 1 && hist.filter(m => m.bot).pop().from === 'ПопугайТест', 'бот ответил в общем чате на обращение по имени');
-  await A.req('chat.send', { text: 'обычная фраза без вопроса' });
+  ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === globBot, 'в общем чате бот не отвечает');
+  /* отдельный чат с ботом: у каждого игрока свой */
+  r = await A.req('chat.send', { to: '@parrot', text: 'попугай привет' });
+  ok(r.ok, 'сообщение в личный чат с ботом принято');
   await sleep(1200);
-  ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === botCount, 'на обычную фразу бот не отвечает');
+  const botHist = (await A.req('chat.history', { with: '@parrot' }));
+  const botMsgs = botHist.msgs.filter(m => m.bot);
+  ok(botHist.msgs.length >= 2 && botMsgs.length >= 1, 'бот ответил в отдельном чате');
+  ok(botMsgs.pop().from === 'ПопугайТест', 'ответ от имени, заданного в настройках');
+  ok(botHist.bot === 'ПопугайТест' && botHist.on === true, 'клиент получает имя и состояние бота');
+  ok((await B.req('chat.history', { with: '@parrot' })).msgs.length === 0, 'у каждого игрока своя переписка с ботом');
+  ok((await A.req('chat.history', {})).msgs.filter(m => m.to === 'ПопугайТест').length === 0, 'личный чат с ботом не попадает в общий');
+  r = await A.req('profile.get'); ok(r.ok && r.stats.msgs >= 3, 'сообщения боту идут в статистику игрока');
   r = await A.req('admin.parrot', { on: false });
   ok(r.ok && !r.on, 'бот выключается');
-  await A.req('chat.send', { text: 'попугай ты тут?' });
-  await sleep(1200);
-  ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === botCount, 'выключенный бот молчит');
+  ok(!(await A.req('chat.send', { to: '@parrot', text: 'ты тут?' })).ok, 'выключенному боту написать нельзя');
   r = await A.req('admin.parrot', { cfg: { botName: 'ParrotAI', trigger: 'q:', delaySec: 1 } });
   ok(r.ok && r.cfg.botName === 'ParrotAI' && r.cfg.trigger === 'q:', 'настройки бота возвращены');
 

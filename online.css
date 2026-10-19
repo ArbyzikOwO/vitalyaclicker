@@ -312,3 +312,20 @@
 .ol-top-row>*{position:relative}
 /* ---------- цены в админке ---------- */
 .ol-item .ol-price-in{width:120px;flex:none;text-align:right;padding:6px 8px;font-size:12px}
+
+/* ---------- обязательный вход (экран блокировки игры) ---------- */
+.ol-gate{position:fixed;inset:0;z-index:4000;display:none;align-items:center;justify-content:center;padding:20px;
+  background:radial-gradient(circle at 50% 25%, rgba(30,39,64,.96) 0%, rgba(8,10,14,.985) 65%);backdrop-filter:blur(8px);overflow:auto}
+.ol-gate.show{display:flex}
+.ol-gate-card{width:100%;max-width:420px;background:linear-gradient(180deg,#1c2434,#12161f);border:1px solid var(--line);
+  border-radius:22px;padding:22px 20px 18px;box-shadow:0 24px 70px rgba(0,0,0,.75), 0 0 60px rgba(255,201,60,.12);text-align:center}
+.ol-gate-ico{font-size:40px;line-height:1;margin-bottom:6px}
+.ol-gate-title{font-size:22px;font-weight:900;letter-spacing:.4px;color:var(--gold);margin-bottom:8px}
+.ol-gate-sub{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:16px}
+.ol-gate .ol-in{margin-top:8px;width:100%}
+.ol-gate .ol-row{margin-top:10px}
+.ol-gate-srv{font-size:12px;color:var(--muted);text-align:left}
+.ol-gate-srv summary{cursor:pointer}
+.ol-gate-msg{font-size:12.5px;font-weight:700;color:var(--muted);min-height:18px;margin-top:12px;line-height:1.45}
+.ol-msg .bot{color:#7ee0c0}
+.ol-msg.botsay{background:rgba(126,224,192,.05);border-radius:12px}

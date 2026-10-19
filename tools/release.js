@@ -10,6 +10,10 @@
        node tools/release.js                 (версия поднимется сама)
        node tools/release.js --no-upload     (только собрать)
        node tools/release.js --upload-only   (только выложить уже собранное в dist)
+       node tools/release.js --linux         (собрать Linux AppImage — нужен Linux)
+
+   На Windows собираются EXE и APK, на Linux — AppImage (кроссплатформенная
+   сборка Electron невозможна: Windows-файлы делает Windows, Linux — Linux).
 
    Сервер читает stdout: PROGRESS: ... (показывается игрокам),
    DONE: <версия> — успех, FAIL: <причина> — ошибка.
@@ -69,6 +73,12 @@ const NO_UPLOAD = has('--no-upload');
 const UPLOAD_ONLY = has('--upload-only');
 const SKIP_EXE = has('--skip-exe');
 const SKIP_APK = has('--skip-apk');
+/* Linux-сборка (AppImage) делается только на Linux: Electron не умеет
+   собирать Linux-бинарник на Windows. --linux заставляет, --skip-linux отменяет. */
+const LINUX_FLAG = has('--linux');
+const SKIP_LINUX = has('--skip-linux') || (!LINUX_FLAG && process.platform !== 'linux');
+const BUILD_LINUX = !SKIP_LINUX;
+const APPIMAGE = 'VitalyaClicker.AppImage';
 
 /* ---------------- конфигурация ---------------- */
 function readJson(p, def) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return def; } }
@@ -139,11 +149,22 @@ function bump(v) {
     /* version.json читают клиенты: из него берётся версия, описание
        и имена файлов в релизе (releases/latest/download/<имя>). */
     const notes = NOTES || ('Обновление игры v' + version);
+    /* какие сборки делает эта машина: Windows — exe+apk, Linux — AppImage */
+    const IS_WIN = process.platform === 'win32';
+    const BUILD_EXE = !SKIP_EXE && IS_WIN;
+    const BUILD_APK = !SKIP_APK && IS_WIN;
+    const PACKED = { win: 'VitalyaClicker.exe', android: 'VitalyaClicker.apk', linux: APPIMAGE };
+    const wanted = [];
+    if (BUILD_EXE) wanted.push('win');
+    if (BUILD_APK) wanted.push('android');
+    if (BUILD_LINUX) wanted.push('linux');
     const versionPayload = {
       version: version,
       released: new Date().toISOString(),
       notes: notes,
-      assets: { win: 'VitalyaClicker.exe', android: 'VitalyaClicker.apk' }
+      /* перечисляем только то, что реально лежит в этом релизе: иначе игрок
+         другой платформы получит ссылку на несуществующий файл */
+      assets: wanted.reduce((o, k) => (o[k] = PACKED[k], o), {})
     };
     writeJson(vFile, versionPayload);
     for (const p of [path.join(BUILD, 'electron', 'package.json'), path.join(BUILD, 'mobile', 'package.json')]) {
@@ -157,27 +178,38 @@ function bump(v) {
       VC_VERSION: version,
       VC_REPO: REPO,
       VC_SERVER: SERVER_URL || process.env.VC_SERVER || 'http://localhost:3000',
+      VC_TARGET: BUILD_LINUX ? 'linux' : 'win',
       PATH: NODE_DIR + path.delimiter + (process.env.PATH || '')
     });
     if (!UPLOAD_ONLY) run(process.execPath, [path.join(BUILD, 'prepare.js')], ROOT, 'Сборка файлов игры', env);
     if (SERVER_URL) info('адрес сервера в сборке: ' + SERVER_URL);
 
-    /* 3) EXE */
-    if (!SKIP_EXE) {
+    /* 3) EXE (Windows) */
+    if (BUILD_EXE) {
       say('Сборка EXE (Electron) — это занимает несколько минут');
       if (!UPLOAD_ONLY) run(process.execPath, [NPM_CLI, 'run', 'dist'], path.join(BUILD, 'electron'), 'Сборка EXE', env);
       const exe = path.join(DIST, 'VitalyaClicker.exe');
       if (!fs.existsSync(exe)) return die('EXE не найден: ' + exe);
       info('EXE: ' + (fs.statSync(exe).size / 1048576).toFixed(1) + ' МБ');
-    }
+    } else info('EXE пропущен (эта машина не Windows)');
 
-    /* 4) APK */
-    if (!SKIP_APK) {
+    /* 4) APK (Android) */
+    if (BUILD_APK) {
       say('Сборка APK (Android) — это занимает несколько минут');
       if (!UPLOAD_ONLY) run(process.execPath, [path.join(BUILD, 'build-apk.js')], BUILD, 'Сборка APK', env);
       const apk = path.join(DIST, 'VitalyaClicker.apk');
       if (!fs.existsSync(apk)) return die('APK не найден: ' + apk);
       info('APK: ' + (fs.statSync(apk).size / 1048576).toFixed(1) + ' МБ');
+    } else info('APK пропущен (эта машина не Windows)');
+
+    /* 5) AppImage (Linux) — собирается только на Linux */
+    if (BUILD_LINUX) {
+      say('Сборка AppImage (Linux) — это занимает несколько минут');
+      if (!UPLOAD_ONLY) run(process.execPath, [NPM_CLI, 'run', 'dist:linux'], path.join(BUILD, 'electron'), 'Сборка AppImage', env);
+      const img = path.join(DIST, APPIMAGE);
+      if (!fs.existsSync(img)) return die('AppImage не найден: ' + img);
+      try { fs.chmodSync(img, 0o755); } catch (e) {}
+      info('AppImage: ' + (fs.statSync(img).size / 1048576).toFixed(1) + ' МБ');
     }
 
     if (NO_UPLOAD) { say('Сборка готова (без публикации)'); okDone(version); return; }
@@ -194,7 +226,7 @@ function bump(v) {
       json: {
         tag_name: tag,
         name: 'VitalyaClicker ' + tag,
-        body: notes + '\n\n- EXE: VitalyaClicker.exe (Windows)\n- APK: VitalyaClicker.apk (Android)\n\nОбновление можно поставить прямо из игры.',
+        body: notes + '\n\n' + wanted.map(k => '- ' + PACKED[k] + ' (' + k + ')').join('\n') + '\n\nОбновление можно поставить прямо из игры.',
         draft: false,
         prerelease: false
       }
@@ -202,8 +234,7 @@ function bump(v) {
     info('релиз создан: ' + rel.html_url);
 
     const assets = [];
-    if (!SKIP_EXE) assets.push([path.join(DIST, 'VitalyaClicker.exe'), 'VitalyaClicker.exe']);
-    if (!SKIP_APK) assets.push([path.join(DIST, 'VitalyaClicker.apk'), 'VitalyaClicker.apk']);
+    for (const k of wanted) { const f = path.join(DIST, PACKED[k]); if (fs.existsSync(f)) assets.push([f, PACKED[k]]); }
     for (const [file, name] of assets) {
       const size = fs.statSync(file).size;
       say('Загрузка ' + name + ' (' + (size / 1048576).toFixed(1) + ' МБ)');

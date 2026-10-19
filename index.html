@@ -235,6 +235,10 @@
   .modal-btn{flex:1;padding:12px 10px;border:none;border-radius:12px;font-family:inherit;font-weight:900;font-size:14.5px;cursor:pointer;transition:.15s;}
   .modal-btn.yes{background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;}
   .modal-btn.no{background:#242d3d;color:var(--text);border:1px solid #313c50;}
+  /* свои окна вместо системных prompt/confirm (в APK их вообще нет) */
+  .vc-dlg .modal-box{max-width:380px}
+  .vc-dlg-in{width:100%;box-sizing:border-box;margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid #313c50;background:#0e121a;color:var(--text);font-family:inherit;font-size:15px;font-weight:800;outline:none}
+  .vc-dlg-in:focus{border-color:var(--gold)}
   .gpu-choice{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
   .gpu-choice button{padding:12px;border-radius:12px;border:1px solid var(--line);background:#242d3d;color:var(--text);font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;text-align:left;transition:.12s;}
   .gpu-choice button:hover{border-color:var(--gold);color:var(--gold)}
@@ -683,7 +687,8 @@ const SPEC_SKINS = [
   { id: 104, name: 'Арбузик младший', src: 'skins/spec_bafs/arbyzik_ml.jpg', mult: 6.5, price: 7.5e9, special: true, luck: 0.08, note: '+8% удача' },
   { id: 105, name: 'Лох', src: 'skins/spec_bafs/lox.jpg', mult: 1, price: Infinity, special: true, luck: 0.01, isConsolation: true, note: '+1% удача' },
   { id: 106, name: 'ВАЗ', src: 'skins/spec_bafs/BAS.jpg', mult: 1, price: Infinity, special: true, isVaz: true, note: 'майнинг × прокруты (со Шахидом)' },
-  { id: 107, name: 'Глава китайской мафии', src: 'skins/spec_bafs/mafia.jpg', mult: 1, price: 100e12, special: true, isMafia: true, note: 'отгоняет полицию в саду' }
+  { id: 107, name: 'Глава китайской мафии', src: 'skins/spec_bafs/mafia.jpg', mult: 1, price: 100e12, special: true, isMafia: true, note: 'отгоняет полицию в саду' },
+  { id: 108, name: 'Телифон', src: 'skins/spec_bafs/telifon.jpg', mult: 1.2, price: 25e9, special: true, phone: true, luck: 0.05, note: 'звонит и кусается · +5% удача' }
 ];
 const SKIN_META = {
   0: { name: 'Виталя 69', emoji: '⚡', price: 0, mult: 1 }, 1: { name: 'Арбуз', emoji: '🍉', price: 500, mult: 1.2 },
@@ -724,9 +729,11 @@ function checkPromo(input) { if (!input) return null; return _PROMOS[_fnv(input)
 let soundEnabled = false;
 let spinning = false;
 const bgMusic = new Audio('audio/background.ogg');
-bgMusic.preload = 'auto'; bgMusic.loop = true; bgMusic.volume = 0.5;
+/* preload: 'none' — файлы не тянутся при запуске, игра открывается быстрее,
+   музыка догружается при первом воспроизведении */
+bgMusic.preload = 'none'; bgMusic.loop = true; bgMusic.volume = 0.5;
 const casinoAudio = new Audio('audio/casinokrut.ogg');
-casinoAudio.preload = 'auto'; casinoAudio.loop = true; casinoAudio.volume = 0.75;
+casinoAudio.preload = 'none'; casinoAudio.loop = true; casinoAudio.volume = 0.75;
 function playSafe(a) { if (!a || !soundEnabled) return; try { const p = a.play(); if (p && p.catch) p.catch(()=>{}); } catch(e){} }
 function stopAllMusic() { [bgMusic, casinoAudio].forEach(a => { try { a.pause(); } catch(e){} }); sfxActive.forEach(a => { try { a.pause(); } catch(e){} }); sfxActive.clear(); }
 function playCurrentBG() { if (!soundEnabled || spinning) return; if (bgMusic.paused) playSafe(bgMusic); }
@@ -735,14 +742,16 @@ function stopCasinoSound() { try { casinoAudio.pause(); casinoAudio.currentTime 
 
 /* ---------- КОРОТКИЕ ЗВУКИ (audio/<имя>.ogg) ----------
    Пока мелодия играет, фоновая музыка ставится на паузу и продолжается после неё.
-   duck:false — фон не глушить, single:true — не запускать такой же звук повторно. */
+   duck:false — фон не глушить, single:true — не запускать такой же звук повторно.
+   Для отдельных звуков формат отличается (см. SFX_FILE). */
 const sfxActive = new Set();
+const SFX_FILE = { telifon: 'telifon.mp3' };
 function sfxPlay(name, opts) {
   opts = opts || {};
   if (!soundEnabled) return;
   const duck = opts.duck !== false;
   if (opts.single) { for (const x of sfxActive) if (x._n === name) return; }
-  const a = new Audio('audio/' + name + '.ogg'); a._n = name; a.volume = opts.volume == null ? 0.9 : opts.volume;
+  const a = new Audio('audio/' + (SFX_FILE[name] || name + '.ogg')); a._n = name; a.volume = opts.volume == null ? 0.9 : opts.volume;
   let done = false, fb = null;
   const end = () => {
     if (done) return; done = true; clearTimeout(fb);
@@ -759,14 +768,15 @@ function sfxStopAll() {
   sfxActive.forEach(a => { try { a.pause(); } catch(e){} if (a._end) a._end(); });
   sfxActive.clear();
 }
-/* редкое напоминание «телифон кусается» — раз в 1–4 минуты, не во время вращения */
+/* скин «Телифон»: пока он куплен, телефон время от времени звонит и кусается */
+const PHONE_SKIN_ID = 108;
+function phoneOwned() { try { return (state.ownedSkins || []).indexOf(PHONE_SKIN_ID) >= 0; } catch (e) { return false; } }
 function phoneSchedule() {
   setTimeout(function fire() {
     if (spinning) { setTimeout(fire, 10000); return; }
-    toast('📱 телифон кусается');
-    sfxPlay('mel-a', { single: true });
+    if (phoneOwned()) { toast('📱 Телифон кусается'); sfxPlay('telifon', { single: true }); }
     phoneSchedule();
-  }, 60000 + Math.random() * 180000);
+  }, 40000 + Math.random() * 120000);
 }
 
 const soundBtn = document.getElementById('soundBtn');
@@ -1222,13 +1232,15 @@ function base64ToBuf(b64) {
   return bytes.buffer;
 }
 function save() {
-  if (frozen) return;
+  /* VC_LOCKED — игрок ещё не вошёл в аккаунт: игра не сохраняется */
+  if (frozen || window.VC_LOCKED) return;
   state.version = SAVE_VERSION;
   state.timeexit = Date.now();
   try { localStorage.setItem(SAVE_KEY, bufToBase64(serialize())); }
   catch(e) { console.error('Save error:', e); }
 }
 function saveForced() {
+  if (window.VC_LOCKED) return;
   state.version = SAVE_VERSION;
   state.timeexit = Date.now();
   try { localStorage.setItem(SAVE_KEY, bufToBase64(serialize())); }
@@ -1328,6 +1340,46 @@ function showBlockedOnLoad() {
 function fmt(n) { n = Math.floor(n); if (!isFinite(n) || n <= 0) return '0'; if (n < 1000) return String(n); const units = ['K','M','B','T','Qa','Qi','Sx','Sp','Oc','No','Dc']; let i = -1; while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; } return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : n.toFixed(0)) + units[i]; }
 function brokenImg() { const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="100%" height="100%" fill="#2a3140"/><text x="50%" y="46%" font-size="90" text-anchor="middle" dominant-baseline="central">🖼️</text><text x="50%" y="78%" font-size="18" fill="#8792a6" text-anchor="middle" font-family="Arial">нет файла</text></svg>`; return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); }
 function toast(msg) { if (/не хватает|недостаточно/i.test(String(msg))) sfxPlay('mel-many', { single: true }); const box = document.getElementById('toasts'); if (!box) return; const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; box.appendChild(t); setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 320); }, 1800); }
+
+/* ---------- СВОИ ОКНА ВМЕСТО СИСТЕМНЫХ ----------
+   prompt/confirm/alert в приложении смотрятся чужеродно, а в Android-обёртке
+   prompt вообще не поддерживается. Поэтому все подтверждения и вводы свои.
+   vcConfirm → true/false, vcPrompt → строка или null, vcAlert → просто окно. */
+function vcDialog(cfg) {
+  return new Promise(resolve => {
+    const q = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay vc-dlg show';
+    const body = cfg.html || (cfg.text ? '<div class="modal-sub">' + q(cfg.text).replace(/\n/g, '<br>') + '</div>' : '');
+    const field = cfg.field === false ? '' :
+      '<input class="vc-dlg-in" id="vcDlgIn" autocomplete="off" spellcheck="false" value="' + q(cfg.value == null ? '' : cfg.value) + '" placeholder="' + q(cfg.placeholder || '') + '">';
+    ov.innerHTML = '<div class="modal-box"><div class="modal-title">' + q(cfg.title) + '</div>' + body + field +
+      '<div class="modal-btns">' + (cfg.cancel === false ? '' : '<button class="modal-btn no" id="vcDlgNo">' + q(cfg.cancelText || 'Отмена') + '</button>') +
+      '<button class="modal-btn yes" id="vcDlgYes">' + q(cfg.okText || 'OK') + '</button></div></div>';
+    document.body.appendChild(ov);
+    const inp = ov.querySelector('#vcDlgIn');
+    const back = () => (cfg.field === false ? false : null);
+    const fin = v => { try { ov.remove(); } catch (e) {} resolve(v); };
+    const yes = () => fin(cfg.field === false ? true : (inp ? inp.value.trim() : ''));
+    ov.querySelector('#vcDlgYes').onclick = yes;
+    const no = ov.querySelector('#vcDlgNo'); if (no) no.onclick = () => fin(back());
+    ov.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); yes(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fin(back()); }
+    }, true);
+    if (inp) { inp.focus(); inp.select(); } else { const b = ov.querySelector('#vcDlgYes'); if (b) b.focus(); }
+  });
+}
+function vcConfirm(title, text, opts) {
+  opts = opts || {};
+  return vcDialog({ title: title, text: text, field: false, okText: opts.okText || 'Да', cancelText: opts.cancelText || 'Отмена' });
+}
+function vcAlert(title, text) { return vcDialog({ title: title, text: text, field: false, okText: 'Понятно', cancel: false }); }
+function vcPrompt(title, value, opts) {
+  opts = opts || {};
+  return vcDialog({ title: title, text: opts.text, value: value, placeholder: opts.placeholder, okText: opts.okText || 'OK' });
+}
+window.vcDialog = vcDialog; window.vcConfirm = vcConfirm; window.vcAlert = vcAlert; window.vcPrompt = vcPrompt;
 function fmtTime(ts) { const d = new Date(ts); const p = n => String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 
 /* ============================================================
@@ -1595,7 +1647,7 @@ function renderSkins() {
     let thumb;
     if (s.isCss) thumb = `<div class="skin-img css0"><span class="bolt l">⚡</span><span class="num">69</span><span class="bolt r">⚡</span></div>`;
     else if (s.isSecret && !owned) thumb = `<div class="skin-img"><span class="skin-lock">🔒</span></div>`;
-    else thumb = `<div class="skin-img"><img src="${s.src}" alt="${s.name}" draggable="false" onerror="this.onerror=null;this.src='${brokenImg().replace(/'/g,"\\'")}';"></div>`;
+    else thumb = `<div class="skin-img"><img src="${s.src}" alt="${s.name}" loading="lazy" decoding="async" draggable="false" onerror="this.onerror=null;this.src='${brokenImg().replace(/'/g,"\\'")}';"></div>`;
     const noteStr = s.note ? ` <span style="color:#8792a6">(${s.note})</span>` : '';
     return `<div class="${cls.join(' ')}" data-skin="${s.id}" data-cost="${(owned && !isConsumable)||cost0===Infinity?0:cost0}">${topBadge}${thumb}<div class="skin-name">${s.name}</div><div class="skin-mult">×${s.mult||1} доход${noteStr}</div><div>${foot}</div></div>`;
   }).join('');
@@ -2545,8 +2597,8 @@ document.getElementById('uploadSaveInput').addEventListener('change', (e) => {
   reader.onerror = () => toast('❌ Не удалось прочитать файл');
   reader.readAsArrayBuffer(file);
 });
-function confirmReset() {
-  if (!confirm('Сбросить сохранение? Это действие необратимо.')) return;
+async function confirmReset() {
+  if (!(await vcConfirm('🗑️ Сбросить сохранение?', 'Это действие необратимо: прогресс, скины и апгрейды исчезнут.', { okText: 'Сбросить' }))) return;
   frozen = true;
   wipeAllSaves();
   toast('🗑️ Сохранение сброшено. Перезагрузка...');

@@ -19,6 +19,14 @@ const F = (n) => { try { return fmt(n); } catch (e) { return String(n); } };
 const roleTag = o => o && o.owner ? '<span class="ol-tag gold">👑 OWNER</span>' : (o && o.admin ? '<span class="ol-tag red">ADMIN</span>' : '');
 const hhmm = ts => { const d = new Date(ts); const p = n => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()); };
 
+/* ---------- свои окна вместо системных confirm/prompt/alert ----------
+   В Android-обёртке prompt() не работает вообще, а в EXE системные окна
+   выглядят чужеродно. Если свои окна почему-то не подгрузились — запасной
+   вариант на системных, чтобы ничего не сломалось. */
+const askConfirm = (title, sub, opts) => (typeof window.vcConfirm === 'function' ? window.vcConfirm(title, sub, opts) : Promise.resolve(confirm(String(title) + (sub ? '\n' + sub : ''))));
+const askPrompt = (title, value, opts) => (typeof window.vcPrompt === 'function' ? window.vcPrompt(title, value, opts) : Promise.resolve(prompt(title, value == null ? '' : value)));
+const sayAlert = (title, sub) => (typeof window.vcAlert === 'function' ? window.vcAlert(title, sub) : Promise.resolve(alert(String(title))));
+
 /* ---------- локальные настройки ---------- */
 let meta = { server: '', token: '', name: '', rev: 0, auto: true, device: '' };
 try { Object.assign(meta, JSON.parse(lsGet(META_KEY) || '{}')); } catch (e) {}
@@ -89,6 +97,8 @@ function ensurePrice(k, d) {
   return d;
 }
 let walletBusy = false, walletAgain = false;
+/* «ник» бота в личных сообщениях (на сервере такой же ключ) */
+const BOT_PEER = '@parrot';
 const ONLY_GLOBAL = [{ id: 'global', ico: '🌍', name: 'Общий чат' }];
 const rooms = () => ONLY_GLOBAL;
 const emojis = () => (cfg.emojis && cfg.emojis.length ? cfg.emojis : EMOJI_FALLBACK);
@@ -115,7 +125,7 @@ function nameStyle(id) { const c = colorOf(id); return c ? ' style="' + gradInli
 function avaInner(av, name) {
   if (av && String(av).indexOf('data:image/') === 0) return '<img class="ol-avimg-i" src="' + esc(av) + '" alt="">';
   if (av) return '<span class="ol-avemoji-i">' + esc(av) + '</span>';
-  return esc(String(name || '?').slice(0, 1).toUpperCase());
+  return esc(([...String(name || '?')][0] || '?').toUpperCase());
 }
 function avaSmall(o) { return '<span class="ol-pres-ava' + (o && o.avatar ? '' : ' init') + '">' + avaInner(o && o.avatar, (o && o.name) || '?') + '</span>'; }
 function nickHTML(o, plain) {
@@ -181,8 +191,9 @@ function connect() {
         try { if (window.VCUpdater && window.VCUpdater.force) window.VCUpdater.force(rep.needUpdate); } catch (x) {}
         T('⛔ Нужно обновить игру' + (rep.needUpdate.version ? ' до v' + rep.needUpdate.version : ''));
       } else if (bad === 'auth' || (bad && /заблокирован/.test(bad))) {
-        meta.token = ''; saveMeta(); stopReconnect = true;
+        meta.token = ''; meta.name = ''; saveMeta(); stopReconnect = true;
         buildPanel(bad === 'auth' ? 'Сессия истекла — войдите заново' : bad);
+        showGate(bad === 'auth' ? '🔒 Сессия истекла — войдите заново' : '⛔ ' + bad);
       }
       try { sock.close(); } catch (x) {}
     }
@@ -211,22 +222,22 @@ async function afterAuth() {
   await initialSync();
   if (syncReady) await pullWallet();
   renderAll();
+  closeGate();   /* вошли и синхронизировались — игра разблокирована */
 }
 
 /* ============================================================
    ОБЛАЧНЫЕ СОХРАНЕНИЯ
    ============================================================ */
-function localIsFresh() { try { return !lsGet(MAIN_KEY) || (state.clicks === 0 && totalMoney() === 0); } catch (e) { return false; } }
+/* Облако — единственный источник прогресса: при входе всегда берём серверное
+   сохранение, локальный файл нужен только как рабочая копия между запусками.
+   Если в облаке пусто (совсем новый аккаунт) — наоборот, отправляем локальное. */
 async function initialSync() {
   syncReady = false;
   const info = await req('save.info');
   const cloud = info.save;
-  if (!cloud) { syncReady = true; await pushSave(true); return; }                 // в облаке пусто — отправляем локальное
-  if (cloud.device === meta.device || (meta.rev && cloud.rev === meta.rev)) {      // облако = наша же версия
-    meta.rev = cloud.rev; saveMeta(); syncReady = true; return;
-  }
-  if (localIsFresh()) { await applyCloud(); return; }                              // чистое устройство — берём облако
-  showConflict(cloud);
+  if (!cloud) { syncReady = true; await pushSave(true); return; }   // в облаке пусто — отправляем локальное
+  if (cloud.rev && cloud.rev === meta.rev) { syncReady = true; return; }   // это ровно та версия, что уже лежит здесь
+  await applyCloud();                                               // берём облако (страница перезагрузится)
 }
 async function pushSave(force) {
   if (!authed || !syncReady || pushing || isFrozen()) return;
@@ -248,6 +259,12 @@ async function applyCloud() {
   const r = await req('save.get');
   if (r.empty || !r.main) { T('☁️ В облаке пока нет сохранения'); return; }
   frozen = true;                                  // останавливаем автосохранение кликера, чтобы оно не затёрло данные
+  /* страховка: прежний локальный файл не удаляем, а откладываем в резерв
+     (игра его не читает — он нужен, только если что-то пойдёт не так) */
+  try {
+    const old = lsGet(MAIN_KEY);
+    if (old && old !== r.main) lsSet(MAIN_KEY + '.bak-cloud', old);
+  } catch (e) {}
   lsSet(MAIN_KEY, r.main);
   if (r.garden != null) lsSet(GARDEN_KEY, r.garden); else { try { localStorage.removeItem(GARDEN_KEY); } catch (e) {} }
   meta.rev = r.rev; saveMeta();
@@ -339,8 +356,9 @@ function onPush(m) {
       break; }
     case 'chat.dm': {
       const k = m.peer.toLowerCase(); (chat.dms[k] = chat.dms[k] || []).push(m.msg);
+      const mine = m.msg.from.toLowerCase() === String(meta.name).toLowerCase();
       if (sub === 'chat' && chat.room === k && panelVisible()) appendMsg(m.msg);
-      else if (m.msg.from.toLowerCase() === k) { markUnread(k); T('✉️ ' + m.msg.from + ': ' + m.msg.text.slice(0, 60)); }
+      else if (!mine) { markUnread(k); if (k !== BOT_PEER) T('✉️ ' + m.msg.from + ': ' + m.msg.text.slice(0, 60)); }
       break; }
     case 'chat.del': { for (const b of [chat.global].concat(Object.values(chat.rooms))) { const i = b.findIndex(x => x.id === m.msgId); if (i >= 0) b.splice(i, 1); } const n = document.querySelector('[data-mid="' + m.msgId + '"]'); if (n) n.remove(); break; }
     case 'card.rooms': cards.rooms = m.rooms || []; renderCards(); break;
@@ -401,6 +419,8 @@ function updateBadges() {
 }
 function setStatus() {
   const dot = $('onlineTabDot'); if (dot) { dot.classList.toggle('on', authed); }
+  const gm = $('gMsg');
+  if (gm && !authed && meta.token) gm.textContent = (ws && ws.readyState === 1) ? '⏳ Вход…' : '⏳ Подключение к серверу…';
   const s = $('olStatus'); if (!s) return;
   if (authed) { s.textContent = '🟢 в сети'; s.className = 'ol-status ok'; }
   else if (kickedReason) { s.textContent = '⛔ ' + kickedReason; s.className = 'ol-status bad'; }
@@ -554,7 +574,7 @@ async function doTransfer() {
   if (a < cfg.minTransfer) return T('Минимум 🪙 ' + F(cfg.minTransfer));
   const fee = feeOf(a), tot = a + fee;
   if (totalMoney() < tot) return T('❌ Не хватает денег (нужно 🪙 ' + F(tot) + ')');
-  if (!confirm(`Перевести 🪙 ${F(a)} игроку ${to}?\nКомиссия: 🪙 ${F(fee)}\nСпишется: 🪙 ${F(tot)}`)) return;
+  if (!(await askConfirm('💸 Перевод', `Перевести 🪙 ${F(a)} игроку ${to}?\nКомиссия: 🪙 ${F(fee)}\nСпишется: 🪙 ${F(tot)}`, { okText: 'Перевести' }))) return;
   try {
     await pushSave(true);
     const r = await req('transfer', { to, amount: a });
@@ -585,7 +605,7 @@ function renderChatShell() {
   if (!d.dataset.built) {
     d.dataset.built = '1';
     d.innerHTML = `<div class="ol-box"><h3>💬 Чат</h3>
-      <div class="ol-sub-note">Общий чат для всех и личные сообщения друзьям. Реакции — нажмите <b>＋</b> под сообщением. Упоминание пишется как <b>@ник</b>.</div>
+      <div class="ol-sub-note">Общий чат для всех, отдельный чат с ботом 🦜 и личные сообщения друзьям. Реакции — нажмите <b>＋</b> под сообщением. Упоминание пишется как <b>@ник</b>.</div>
       <select class="ol-in" id="chRoom" style="width:100%;margin-bottom:8px"></select>
       <div class="ol-chatlog" id="chLog"></div>
       <div class="ol-row nowrap"><input class="ol-in" id="chText" maxlength="300" placeholder="Сообщение…" autocomplete="off"><button class="ol-btn" data-act="chat-send">➤</button></div>
@@ -595,14 +615,22 @@ function renderChatShell() {
   }
   const sel = $('chRoom'); if (!sel) return;
   const cur = chat.room;
+  const bot = (cfg.bot && cfg.bot.on) ? `<option value="${esc(cfg.bot.peer)}">🦜 ${esc(cfg.bot.name)} (бот)</option>` : '';
   sel.innerHTML = rooms().map(r => `<option value="${r.id}">${r.ico} ${esc(r.name)}</option>`).join('')
+    + bot
     + friends.friends.map(f => `<option value="${esc(f.name.toLowerCase())}">${f.online ? '🟢' : '⚪'} ${esc(f.name)} (личные)</option>`).join('');
   sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'global'; chat.room = sel.value;
   const emo = $('chEmo'); if (emo) emo.innerHTML = emojis().map(e => `<span class="ol-emoji-b" data-act="chat-quick" data-emoji="${e}">${e}</span>`).join('');
 }
 async function loadChat(room) {
   try {
-    if (isRoomId(room)) { const r = await req('chat.history', { room }); if (room === 'global') chat.global = r.msgs; else chat.rooms[room] = r.msgs; }
+    if (room === BOT_PEER) {
+      const r = await req('chat.history', { with: room });
+      chat.dms[room] = r.msgs || [];
+      /* имя и состояние бота приходят вместе с историей */
+      if (r.bot) { cfg.bot = Object.assign({ peer: BOT_PEER }, cfg.bot || {}, { name: r.bot, on: !!r.on }); renderChatShell(); }
+    }
+    else if (isRoomId(room)) { const r = await req('chat.history', { room }); if (room === 'global') chat.global = r.msgs; else chat.rooms[room] = r.msgs; }
     else { const r = await req('chat.history', { with: room }); chat.dms[room] = r.msgs; }
   } catch (e) {}
   if (sub === 'chat') renderChatLog();
@@ -624,11 +652,13 @@ function msgNode(m) {
   const row = document.createElement('div'); row.className = 'ol-msg'; row.dataset.mid = m.id;
   const mine = me && m.from.toLowerCase() === String(meta.name).toLowerCase();
   if (mine) row.classList.add('mine');
-  row.insertAdjacentHTML('beforeend', avaSmall({ name: m.from, avatar: m.av }));
+  if (m.bot) row.classList.add('botsay');
+  row.insertAdjacentHTML('beforeend', avaSmall({ name: m.bot ? '🦜' : m.from, avatar: m.av }));
   const t = document.createElement('span'); t.className = 't'; t.textContent = hhmm(m.at);
-  const b = document.createElement('b'); b.textContent = m.from;
-  if (m.owner) b.className = 'own'; else if (m.admin) b.className = 'adm'; else if (mine) b.className = 'me';
-  b.dataset.act = 'pv-view'; b.dataset.name = m.from; b.title = 'Открыть профиль'; b.classList.add('ol-nmlink');
+  const b = document.createElement('b'); b.textContent = m.bot ? '🦜 ' + m.from : m.from;
+  if (m.bot) b.className = 'bot';
+  else if (m.owner) b.className = 'own'; else if (m.admin) b.className = 'adm'; else if (mine) b.className = 'me';
+  if (!m.bot) { b.dataset.act = 'pv-view'; b.dataset.name = m.from; b.title = 'Открыть профиль'; b.classList.add('ol-nmlink'); }
   const c = m.col ? colorOf(m.col) : null;
   if (c) { b.style.backgroundImage = 'linear-gradient(90deg,' + c.from + ',' + c.to + ')'; b.style.webkitBackgroundClip = 'text'; b.style.backgroundClip = 'text'; b.style.webkitTextFillColor = 'transparent'; }
   const x = document.createElement('span'); x.className = 'txt'; x.innerHTML = ': ' + linkify(m.text);
@@ -1738,28 +1768,22 @@ function parrotBoxHtml() {
   if (!p || typeof p !== 'object') return '';
   const c = p.cfg || {}, st = p.status || {};
   const info = st.loaded ? `модель ${esc(st.file)} · токенов ${st.tokens} · словарь ${st.vocab}` : '⚠️ ' + esc(st.error || 'модель не найдена');
-  return `<div class="ol-box"><h3>🦜 ParrotAI в общем чате</h3>
-    <div class="ol-sub-note">Попугай отвечает в общем чате, когда его спрашивают. Модель лежит в server/models/Parrot-ai.bin: обучить и выгрузить её можно страницей tools/parrot-trainer.html, затем положить файл на сервер и нажать «Перезагрузить модель».</div>
+  return `<div class="ol-box"><h3>🦜 ParrotAI — отдельный чат</h3>
+    <div class="ol-sub-note">У каждого игрока свой чат с ботом: он в списке чатов ниже общего. В общий чат бот не пишет. Модель лежит в server/models/Parrot-ai.bin: обучить и выгрузить её можно страницей tools/parrot-trainer.html, затем положить файл на сервер и нажать «Перезагрузить модель».</div>
     <div class="ol-row nowrap" style="margin-top:0"><button class="ol-btn${p.on ? '' : ' sec'}" data-act="adm-parrot-toggle">${p.on ? '🟢 Включён' : '⚪ Выключен'}</button><span class="ol-dim">${info}</span></div>
     <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="parName" placeholder="Имя бота" maxlength="24" value="${esc(c.botName || '')}">
-      <input class="ol-in" id="parTrig" placeholder="Вызов, напр. q:" maxlength="10" value="${esc(c.trigger || '')}"></div>
-    <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="parDelay" placeholder="Задержка, сек" value="${c.delaySec == null ? 1 : c.delaySec}">
-      <input class="ol-in" id="parTokens" placeholder="Макс. токенов" value="${c.maxTokens == null ? 400 : c.maxTokens}">
+      <input class="ol-in" id="parDelay" placeholder="Задержка, сек" value="${c.delaySec == null ? 1 : c.delaySec}"></div>
+    <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="parTokens" placeholder="Макс. токенов" value="${c.maxTokens == null ? 400 : c.maxTokens}">
       <input class="ol-in" id="parCtx" placeholder="Контекст" value="${c.contextSize == null ? 8 : c.contextSize}"></div>
-    <div class="ol-row" style="margin-top:6px"><label class="ol-dim"><input type="checkbox" id="parAsk"${c.askQuestion ? ' checked' : ''}> отвечать на вопросы</label>
-      <label class="ol-dim"><input type="checkbox" id="parAll"${c.answerAll ? ' checked' : ''}> отвечать на всё</label></div>
     <div class="ol-row nowrap" style="margin-top:6px"><button class="ol-btn" data-act="adm-parrot-save">💾 Сохранить</button><button class="ol-btn sec" data-act="adm-parrot-reload">🔄 Перезагрузить модель</button></div>
   </div>`;
 }
 async function parrotSave(reload) {
   const m = { cfg: {
     botName: ($('parName') || {}).value || 'ParrotAI',
-    trigger: ($('parTrig') || {}).value || '',
     delaySec: ($('parDelay') || {}).value,
     maxTokens: ($('parTokens') || {}).value,
-    contextSize: ($('parCtx') || {}).value,
-    askQuestion: !!($('parAsk') || {}).checked,
-    answerAll: !!($('parAll') || {}).checked
+    contextSize: ($('parCtx') || {}).value
   } };
   if (reload) m.reload = true;
   try {
@@ -1816,14 +1840,26 @@ function renderAdmin() {
 
 async function admAction(act, name) {
   try {
-    if (act === 'adm-give' || act === 'adm-take') { const a = parseAmt(prompt((act === 'adm-give' ? 'Сколько выдать' : 'Сколько списать') + ' игроку ' + name + '? (5K, 2M, 1B…)')); if (!a) return; await req('admin.give', { name, amount: a, take: act === 'adm-take' }); T('✅ Готово'); }
-    else if (act === 'adm-mute') { const m = prompt('Мут на сколько минут?', '10'); if (!m) return; await req('admin.mute', { name, minutes: +m }); T('🔇 Заглушён'); }
+    if (act === 'adm-give' || act === 'adm-take') {
+      const what = act === 'adm-give' ? 'Сколько выдать игроку ' : 'Сколько списать у игрока ';
+      const v = await askPrompt('💰 ' + (act === 'adm-give' ? 'Выдать' : 'Списать'), '10M', { text: what + name + '? (5K, 2M, 1B…)', okText: 'Готово' });
+      if (v == null) return;
+      const a = parseAmt(v); if (!a) return T('❌ Не понял сумму');
+      await req('admin.give', { name, amount: a, take: act === 'adm-take' }); T('✅ Готово');
+    }
+    else if (act === 'adm-mute') { const m = await askPrompt('🔇 Мут', '10', { text: 'Мут игроку ' + name + ' на сколько минут?', okText: 'Мут' }); if (m == null || !m) return; await req('admin.mute', { name, minutes: +m }); T('🔇 Заглушён'); }
     else if (act === 'adm-unmute') { await req('admin.unmute', { name }); T('🔊 Размучен'); }
-    else if (act === 'adm-ban') { const m = prompt('Бан на сколько минут? (0 = навсегда)', '0'); if (m === null) return; const reason = prompt('Причина:', '') || ''; await req('admin.ban', { name, minutes: +m || 0, reason }); T('🚫 Забанен'); }
+    else if (act === 'adm-ban') {
+      const m = await askPrompt('🚫 Бан', '0', { text: 'Бан игроку ' + name + ' на сколько минут? (0 = навсегда)', okText: 'Дальше' });
+      if (m == null) return;
+      const reason = await askPrompt('🚫 Причина бана', '', { text: 'Причина для ' + name + ' (необязательно)', okText: 'Забанить' });
+      if (reason == null) return;
+      await req('admin.ban', { name, minutes: +m || 0, reason }); T('🚫 Забанен');
+    }
     else if (act === 'adm-unban') { await req('admin.unban', { name }); T('✅ Разбанен'); }
-    else if (act === 'adm-demote') { if (!confirm('Снять права администратора у ' + name + '?')) return; await req('admin.remove', { name }); T('🛡️ Права сняты'); }
+    else if (act === 'adm-demote') { if (!(await askConfirm('🛡️ Снять админку?', 'Снять права администратора у ' + name + '?', { okText: 'Снять' }))) return; await req('admin.remove', { name }); T('🛡️ Права сняты'); }
     else if (act === 'adm-kick') { await req('admin.kick', { name }); T('👢 Отключён'); }
-    else if (act === 'adm-pass') { const p = prompt('Новый пароль для ' + name + ' (от 6 символов):'); if (!p) return; await req('admin.setpass', { name, password: p }); T('🔑 Пароль изменён'); }
+    else if (act === 'adm-pass') { const p = await askPrompt('🔑 Новый пароль', '', { text: 'Новый пароль для ' + name + ' (от 6 символов)', okText: 'Сменить' }); if (!p) return; await req('admin.setpass', { name, password: p }); T('🔑 Пароль изменён'); }
     refreshAdmin();
   } catch (e) { T('❌ ' + e.message); }
 }
@@ -1842,13 +1878,19 @@ async function authSubmit(register) {
     retry = 0; connect();
   } catch (e) { msg.textContent = '❌ ' + e.message; }
 }
-function logout() {
-  if (!confirm('Выйти из онлайн-аккаунта? Локальное сохранение останется на этом устройстве.')) return;
+async function logout() {
+  if (!(await askConfirm('Выйти из аккаунта?', 'Прогресс останется в облаке. На этом устройстве данные будут удалены — без входа в аккаунт играть нельзя.', { okText: 'Выйти' }))) return;
+  try { await pushSave(true); } catch (e) {}      // последняя попытка отправить прогресс в облако
   disconnect(); meta.token = ''; meta.name = ''; meta.rev = 0; saveMeta();
-  authed = false; me = null; syncReady = false; chat = { global: [], rooms: {}, dms: {}, room: 'global', unread: new Set(), reactFor: null }; cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false, timers: [], defTurn: 60000, opt: { deck: 36, transfer: true, toEnd: true, turnMs: 60000 } }; duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0 }; prof = null; top = null; bank = null; players = { list: [], q: '', total: 0, online: 0 }; arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 }; sub = 'profile';
-  buildPanel(); setStatus();
+  /* запираем игру ДО очистки: иначе save() на beforeunload запишет состояние обратно */
+  window.VC_LOCKED = true;
+  try { frozen = true; } catch (e) {}
+  try { wipeAllSaves(); } catch (e) {}            // на устройстве не остаётся ничего
+  try { localStorage.removeItem(MAIN_KEY + '.bak-cloud'); } catch (e) {}
+  toast('🚪 Вы вышли из аккаунта');
+  setTimeout(() => location.reload(), 250);
 }
-function onClick(e) {
+async function onClick(e) {
   const el = e.target.closest('[data-act],[data-sub],[data-bet],[data-dbet]'); if (!el) return;
   if (el.dataset.bet) return rouPlace(el.dataset.bet, e.shiftKey || e.ctrlKey);
   if (el.dataset.dbet) return duelPlace(el.dataset.dbet, e.shiftKey || e.ctrlKey);
@@ -1862,7 +1904,7 @@ function onClick(e) {
     case 'top-board': if (el.dataset.b) { topBoard = el.dataset.b; renderTop(); } return;
     case 'top-refresh': return refreshTop();
     case 'cloud-push': return pushSave(true).then(() => T('☁️ Сохранено в облаке'));
-    case 'cloud-pull': if (confirm('Заменить локальное сохранение версией из облака?')) applyCloud().catch(x => T('❌ ' + x.message)); return;
+    case 'cloud-pull': if (await askConfirm('☁️ Взять из облака?', 'Локальное сохранение будет заменено версией из облака.', { okText: 'Взять из облака' })) applyCloud().catch(x => T('❌ ' + x.message)); return;
     case 'tr-send': return doTransfer();
     case 'chat-send': return sendChat();
     case 'chat-quick': { const inp = $('chText'); if (inp) { inp.value += el.dataset.emoji; inp.focus(); } return; }
@@ -1871,7 +1913,7 @@ function onClick(e) {
     case 'chat-del': return netCall('admin.delmsg', { msgId: el.dataset.id });
     case 'sub-goto': return setSub(el.dataset.name);
     case 'bank-deposit': return bankDeposit();
-    case 'bank-withdraw': if (confirm('Снять весь вклад вместе с процентами?')) bankWithdraw(); return;
+    case 'bank-withdraw': if (await askConfirm('🏦 Снять вклад?', 'Снять весь вклад вместе с процентами?', { okText: 'Снять' })) bankWithdraw(); return;
     case 'bank-info': return refreshBank();
     case 'pf-name': return (async () => { const n = ($('pfName').value || '').trim(); if (!n) return; if (n.toLowerCase() === String(meta.name).toLowerCase()) return T('Это ваш текущий ник'); try { const r = await req('profile.setname', { name: n }); meta.name = r.name; saveMeta(); if (me) me.name = r.name; T('✏️ Ник изменён: ' + r.name); buildPanel(); refreshFriends(); refreshPlayers(); refreshTop(); } catch (x) { T('❌ ' + x.message); } })();
     case 'pf-ava': return req('profile.setavatar', { avatar: name }).then(r => { if (me) me.avatar = r.avatar; if (prof) prof.avatar = r.avatar; updateHead(); renderProfile(); T('🖼️ Аватарка обновлена'); }).catch(x => T('❌ ' + x.message));
@@ -1925,7 +1967,7 @@ function onClick(e) {
     case 'fr-add': { const n = ($('frName').value || '').trim(); if (!n) return; return req('friends.add', { name: n }).then(r => { friends = r; renderFriends(); T('👋 Заявка отправлена'); }).catch(x => T('❌ ' + x.message)); }
     case 'fr-accept': return req('friends.accept', { name }).then(r => { friends = r; renderFriends(); renderChatShell(); fillFriendDatalist(); }).catch(x => T('❌ ' + x.message));
     case 'fr-decline': return req('friends.decline', { name }).then(r => { friends = r; renderFriends(); }).catch(x => T('❌ ' + x.message));
-    case 'fr-remove': if (confirm('Удалить ' + name + ' из друзей?')) req('friends.remove', { name }).then(r => { friends = r; renderFriends(); renderChatShell(); fillFriendDatalist(); }).catch(x => T('❌ ' + x.message)); return;
+    case 'fr-remove': if (await askConfirm('👥 Удалить друга?', 'Удалить ' + name + ' из друзей?', { okText: 'Удалить' })) req('friends.remove', { name }).then(r => { friends = r; renderFriends(); renderChatShell(); fillFriendDatalist(); }).catch(x => T('❌ ' + x.message)); return;
     case 'fr-dm': chat.room = name.toLowerCase(); setSub('chat'); renderChatShell(); loadChat(chat.room); return;
     case 'fr-pay': setSub('transfer'); renderTransfer(); $('trTo').value = name; $('trAmt').focus(); return;
     case 'cards-create': return cardsCreate();
@@ -1934,7 +1976,7 @@ function onClick(e) {
     case 'cards-start': return netCall('card.start', {}).then(() => pullWallet());
     case 'cards-leave': return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
     case 'cards-quit': {
-      if (!confirm('Выйти из партии? Ставка не возвращается — останется в банке.')) return;
+      if (!(await askConfirm('🃏 Выйти из партии?', 'Ставка не возвращается — она останется в банке. Вместо вас ход будет пропускаться.', { okText: 'Выйти' }))) return;
       return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
     }
     case 'cards-close': cards.room = null; cards.game = null; cards.pick = []; return refreshCards().then(pullWallet);
@@ -1988,7 +2030,7 @@ function onClick(e) {
       const mode = ($('relMode') ? $('relMode').value : 'auto');
       const where = mode === 'cloud' ? '\n\nСборка пойдёт в облаке GitHub (нужен доступ к репозиторию).'
         : (mode === 'local' ? '\n\nСборка пойдёт на этом компьютере.' : '');
-      if (!confirm('Выпустить обновление' + (v ? ' v' + v : '') + '?' + where + '\n\nВсе игроки будут заблокированы, пока не соберутся EXE и APK, затем файлы попадут в GitHub Releases.')) return;
+      if (!(await askConfirm('🚀 Выпустить обновление' + (v ? ' v' + v : '') + '?', 'Все игроки будут заблокированы, пока не соберутся EXE, APK и Linux-сборка, затем файлы попадут в GitHub Releases.' + where, { okText: 'Выпустить' }))) return;
       return req('admin.release', { version: v, notes, mode }).then(r => {
         T('🚀 Сборка запущена' + (r.version ? ': v' + r.version : '') + (r.mode === 'cloud' ? ' в облаке GitHub' : ' на этом компьютере'));
         return refreshAdmin().catch(() => {});
@@ -2027,6 +2069,70 @@ function onKey(e) {
   else if (e.target.id === 'trAmt') doTransfer();
   else if (e.target.id === 'bankAmt') bankDeposit();
   else if (e.target.id === 'duelBet') duelCreate();
+}
+
+/* ============================================================
+   ОБЯЗАТЕЛЬНЫЙ ВХОД
+   Без аккаунта игра не идёт: прогресс живёт только в облаке, а при
+   выходе из аккаунта на устройстве не остаётся ничего. Экран входа
+   перекрывает игру, пока сессии нет.
+   ============================================================ */
+let gateBusy = false;
+function gateBuild() {
+  let g = $('olGate');
+  if (g) return g;
+  g = document.createElement('div');
+  g.id = 'olGate';
+  g.className = 'ol-gate';
+  g.innerHTML = '<div class="ol-gate-card">'
+    + '<div class="ol-gate-ico">🔐</div>'
+    + '<div class="ol-gate-title">VitalyaClicker 69</div>'
+    + '<div class="ol-gate-sub">Вход обязателен: прогресс хранится в облаке и приезжает на любое устройство. Вход помнится неделю. Выйдете из аккаунта — на устройстве не останется ничего.</div>'
+    + '<input class="ol-in" id="gName" placeholder="Ник (3–16 символов)" maxlength="16" autocomplete="username">'
+    + '<input class="ol-in" id="gPass" type="password" placeholder="Пароль (от 6 символов)" maxlength="64" autocomplete="current-password">'
+    + '<div class="ol-row" style="margin-top:10px"><button class="ol-btn" id="gLogin" style="flex:1">Войти</button><button class="ol-btn sec" id="gReg" style="flex:1">Регистрация</button></div>'
+    + '<details class="ol-gate-srv" style="margin-top:10px"><summary>⚙️ Адрес сервера</summary><input class="ol-in" id="gServer" placeholder="http://адрес:3000" style="width:100%;margin-top:8px"></details>'
+    + '<div class="ol-gate-msg" id="gMsg"></div></div>';
+  document.body.appendChild(g);
+  $('gLogin').onclick = () => gateAuth(false);
+  $('gReg').onclick = () => gateAuth(true);
+  $('gServer').addEventListener('change', e => {
+    const v = e.target.value.trim().replace(/\/+$/, '');
+    meta.server = v; meta.manualServer = !!v; saveMeta();
+    if (!v) $('gMsg').textContent = '❌ Укажите адрес сервера';
+  });
+  ['gName', 'gPass'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); gateAuth(false); } }));
+  return g;
+}
+async function gateAuth(register) {
+  const msg = $('gMsg');
+  const name = ($('gName').value || '').trim(), pass = $('gPass').value || '';
+  const srv = ($('gServer').value || '').trim().replace(/\/+$/, '');
+  if (srv && srv !== meta.server) { meta.server = srv; meta.manualServer = true; saveMeta(); }
+  if (!name || !pass) { msg.textContent = '❌ Введите ник и пароль'; return; }
+  if (!meta.server) { msg.textContent = '❌ Не задан адрес сервера'; return; }
+  if (gateBusy) return;
+  gateBusy = true;
+  msg.textContent = register ? '⏳ Создаём аккаунт…' : '⏳ Входим…';
+  try {
+    const r = await httpPost(register ? '/api/register' : '/api/login', { name, password: pass });
+    meta.token = r.token; meta.name = r.name; meta.rev = 0; saveMeta();
+    msg.textContent = '⏳ Подключаемся к серверу…';
+    retry = 0; connect();
+  } catch (e) {
+    msg.textContent = '❌ ' + e.message;
+  } finally { gateBusy = false; }
+}
+function showGate(notice) {
+  window.VC_LOCKED = true;
+  const g = gateBuild();
+  const srv = $('gServer'); if (srv && !srv.value) srv.value = meta.server || '';
+  if (notice) $('gMsg').textContent = notice;
+  g.classList.add('show');
+}
+function closeGate() {
+  window.VC_LOCKED = false;
+  const g = $('olGate'); if (g) g.classList.remove('show');
 }
 
 /* ============================================================
@@ -2072,7 +2178,9 @@ if (panel) {
   const tab = document.querySelector('.tab[data-tab="online"]');
   if (tab) tab.addEventListener('click', () => { if (authed) { setSub(sub); chat.unread.delete(chat.room); updateBadges(); } updatePreview(); });
   buildPanel();
-  applyRemoteServer(false).then(changed => { if (changed) buildPanel(); if (meta.token) connect(); });
+  /* пока не вошли — игра заперта экраном входа */
+  window.VC_LOCKED = true;
+  applyRemoteServer(false).catch(() => false).then(changed => { if (changed) buildPanel(); if (meta.token) connect(); else showGate(''); });
   setInterval(() => { if (meta.auto && authed && syncReady) pushSave(false); }, 30000);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { pushSave(false); }

@@ -35,14 +35,19 @@ const GH_WORKFLOW = process.env.VC_RELEASE_WORKFLOW || 'release.yml';
 /* версия игры из version.json — попадает в /api/ping и в сборки.
    Читаем с небольшим кэшем: сразу после выпуска обновления сервер уже
    знает новую версию и может требовать её от старых сборок. */
-let _verCache = { at: 0, v: '' };
-function currentVersion() {
-  if (_verCache.v && Date.now() - _verCache.at < 30000) return _verCache.v;
-  let v = '';
-  try { v = String(JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version || '').replace(/^v/i, ''); } catch (e) {}
-  _verCache = { at: Date.now(), v: v };
-  return v;
+let _verCache = { at: 0, v: '', assets: {} };
+function verInfo() {
+  if (_verCache.v && Date.now() - _verCache.at < 30000) return _verCache;
+  let v = '', a = {};
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+    v = String(j.version || '').replace(/^v/i, '');
+    if (j.assets && typeof j.assets === 'object') a = j.assets;
+  } catch (e) {}
+  _verCache = { at: Date.now(), v: v, assets: a };
+  return _verCache;
 }
+function currentVersion() { return verInfo().v; }
 
 const CFG = {
   transferFee: 0.05,      // комиссия перевода (5%), платит отправитель сверху
@@ -148,6 +153,16 @@ function limited(k, max, windowMs) {
   arr.push(t); hits.set(k, arr); return false;
 }
 setInterval(() => { const t = now(); for (const [k, a] of hits) if (!a.length || t - a[a.length - 1] > 3600000) hits.delete(k); }, 600000).unref();
+
+/* сессии живут SESSION_MS (неделя): просроченные убираем на старте и раз в час */
+function pruneTokens() {
+  const t = now(); let n = 0;
+  for (const k of Object.keys(db.tokens)) { const v = db.tokens[k]; if (v && v.exp && v.exp < t) { delete db.tokens[k]; n++; } }
+  if (n) markDirty();
+  return n;
+}
+pruneTokens();
+setInterval(pruneTokens, 3600000).unref();
 
 /* ---------------- ПРОВЕРКА СОХРАНЕНИЯ (data.bin) ---------------- */
 function fnvNew(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
@@ -430,7 +445,7 @@ function pub(u) { return { name: u.display, admin: !!u.admin, owner: !!u.owner, 
 function friendsPresence(u) { for (const f of u.friends) pushTo(f, { t: 'friends.update' }); }
 
 /* ---------------- HTTP: статика + регистрация/вход ---------------- */
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ogg': 'audio/ogg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.ogg': 'audio/ogg', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.apk': 'application/vnd.android.package-archive', '.exe': 'application/octet-stream', '.txt': 'text/plain; charset=utf-8' };
 function readBody(req, max = 8192) {
   return new Promise((res, rej) => {
     let n = 0; const chunks = [];
@@ -440,13 +455,24 @@ function readBody(req, max = 8192) {
   });
 }
 function ipOf(req) { return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?'; }
+/* сессия живёт неделю: игрок не входит заново каждый запуск, но забытый
+   на чужом устройстве вход сам истекает. Активность продлевает срок. */
+const SESSION_MS = 7 * 24 * 3600 * 1000;
 function issueToken(u) {
   const token = crypto.randomBytes(32).toString('hex');
-  db.tokens[sha256(token).toString('hex')] = { user: u.name, at: now() };
+  db.tokens[sha256(token).toString('hex')] = { user: u.name, at: now(), exp: now() + SESSION_MS };
   const mine = Object.entries(db.tokens).filter(([, v]) => v.user === u.name).sort((a, b) => a[1].at - b[1].at);
   while (mine.length > 8) delete db.tokens[mine.shift()[0]];
   markDirty();
   return token;
+}
+/* достаём запись сессии и выбрасываем просроченные */
+function tokenRec(token) {
+  const h = sha256(String(token || '')).toString('hex');
+  const rec = db.tokens[h];
+  if (!rec) return null;
+  if (rec.exp && rec.exp < now()) { delete db.tokens[h]; markDirty(); return null; }
+  return { h, rec };
 }
 function banInfo(u) {
   if (!u.ban) return null;
@@ -807,8 +833,10 @@ function summary(u) {
   return { rev: u.save.rev, updatedAt: u.save.updatedAt, device: u.save.device || '', money: p.ok ? p.money : 0, clicks: p.ok ? p.clicks : 0 };
 }
 function meInfo(u) {
-  return { name: u.display, admin: !!u.admin, owner: !!u.owner, rev: u.save ? u.save.rev : 0, avail: avail(u), xp: u.xp || 0, level: levelOf(u.xp), avatar: u.avatar || null, color: u.color || '', nameAt: u.nameAt || 0, prices: prices, cfg: { fee: CFG.transferFee, minTransfer: CFG.minTransfer, minBet: CFG.minBet, turnMs: CFG.turnMs, bankRate: CFG.bankRate, bankMin: CFG.bankMin, renameMs: CFG.renameMs, rooms: ROOMS.map(([id, ico, name]) => ({ id, ico, name })), emojis: EMOJIS, colors: COLORS, avatars: AVATARS } };
+  return { name: u.display, admin: !!u.admin, owner: !!u.owner, rev: u.save ? u.save.rev : 0, avail: avail(u), xp: u.xp || 0, level: levelOf(u.xp), avatar: u.avatar || null, color: u.color || '', nameAt: u.nameAt || 0, prices: prices, cfg: { fee: CFG.transferFee, minTransfer: CFG.minTransfer, minBet: CFG.minBet, turnMs: CFG.turnMs, bankRate: CFG.bankRate, bankMin: CFG.bankMin, renameMs: CFG.renameMs, rooms: ROOMS.map(([id, ico, name]) => ({ id, ico, name })), emojis: EMOJIS, colors: COLORS, avatars: AVATARS, bot: botInfo() } };
 }
+/* отдельный чат с ботом: клиент показывает его в списке чатов */
+function botInfo() { return { peer: BOT_PEER, name: parrotCfg().botName, on: !!(db.meta && db.meta.parrotOn) }; }
 function friendsView(u) {
   const f = n => { const x = getUser(n); return x ? Object.assign(pub(x), { online: isOnline(x.name) }) : null; };
   return { friends: u.friends.map(f).filter(Boolean).sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name)), incoming: u.incoming.map(f).filter(Boolean), outgoing: u.outgoing.map(f).filter(Boolean) };
@@ -817,12 +845,12 @@ const dmKey = (a, b) => [a, b].sort().join('|');
 function chatMsg(u, text, room) { return { id: nid('m'), from: u.display, admin: !!u.admin, owner: !!u.owner, av: u.avatar || null, col: u.color || '', text, at: now(), room: room || 'global', react: {} }; }
 function dropFrom(arr, v) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); }
 
-/* ---------------- ParrotAI — болтливый попугай в общем чате ----------------
+/* ---------------- ParrotAI — отдельный чат с ботом ----------------
    Модель: server/models/Parrot-ai.bin (или .json) — её обучение делает
-   страница tools/parrot-trainer.html. Включается и настраивается из админки. */
+   страница tools/parrot-trainer.html. Включается и настраивается из админки.
+   У каждого игрока своя переписка с ботом (ключ dmKey(игрок, '@parrot')),
+   в общем чате бот не появляется. */
 const PARROT_CFG_DEFAULT = { botName: 'ParrotAI', trigger: 'q:', askQuestion: true, answerAll: false, delaySec: 1, maxTokens: 400, contextSize: 8, random: false };
-/* вопросы, на которые стоит отвечать: «что…», «как…», «почему…» и т.п. */
-const QWORD_RE = /^(что|кто|чем|чём|почему|зачем|где|когда|как|какой|какая|какие|каком|сколько|куда|откуда|можно|правда|что делать|что там)\b/i;
 function parrotCfg() { return Object.assign({}, PARROT_CFG_DEFAULT, (db.meta && db.meta.parrotCfg) || {}); }
 function cleanParrotCfg(c) {
   const out = {};
@@ -836,30 +864,44 @@ function cleanParrotCfg(c) {
   if (c.random != null) out.random = !!c.random;
   return out;
 }
-function isParrotTarget(text, c) {
-  const t = String(text || '').trim(), low = t.toLowerCase();
-  if (!t) return false;
-  if (c.answerAll) return true;
-  if (c.trigger && low.startsWith(c.trigger.toLowerCase())) return true;
-  if (c.askQuestion && /\?\s*$/.test(t)) return true;
-  if (c.askQuestion && QWORD_RE.test(t)) return true;
-  if (c.botName && low.includes(String(c.botName).toLowerCase())) return true;
-  return false;
-}
-/* ответ в чат с небольшой задержкой; не чаще 20 ответов в минуту */
-function parrotReply(question, room) {
+/* отдельный чат с ботом: у каждого игрока своя переписка.
+   В никах игроков символ @ запрещён (NAME_RE), поэтому ключ '@parrot'
+   никогда не столкнётся с настоящим игроком. */
+const BOT_PEER = '@parrot';
+/* ответ бота в личный чат игрока; чуть медленнее ответа человека */
+function parrotReplyTo(userName, question) {
   const c = parrotCfg();
-  if (limited('parrot', 20, 60000)) return;
+  if (!(db.meta && db.meta.parrotOn)) return;
+  if (limited('parrot:' + key(userName), 15, 60000)) return;
   const t = setTimeout(() => {
     let ans = null;
     try { ans = Parrot.answer(question, c); } catch (e) { ans = null; }
     if (!ans) return;
-    const msg = { id: nid('m'), from: c.botName, admin: false, owner: false, bot: true, av: null, col: '', text: ans.slice(0, CFG.chatMax), at: now(), room: room || 'global', react: {} };
-    const box = (!room || room === 'global') ? db.chat : (db.rooms[room] = db.rooms[room] || []);
-    box.push(msg); if (box.length > CFG.chatMax) box.splice(0, box.length - CFG.chatMax);
-    markDirty(); pushAll({ t: 'chat.msg', msg });
+    const u = db.users[key(userName)];
+    const msg = {
+      id: nid('m'), from: c.botName, admin: false, owner: false, bot: true, av: null, col: '',
+      text: String(ans).slice(0, CFG.chatMax), at: now(), room: 'bot', to: u ? u.display : userName, react: {}
+    };
+    const k = dmKey(userName, BOT_PEER);
+    const arr = db.dms[k] = db.dms[k] || [];
+    arr.push(msg); if (arr.length > 150) arr.splice(0, arr.length - 150);
+    markDirty(); pushTo(userName, { t: 'chat.dm', msg, peer: BOT_PEER });
   }, Math.max(0, c.delaySec) * 1000 + Math.floor(Math.random() * 400));
   if (t.unref) t.unref();
+}
+/* сообщение игрока боту (обрабатывается в chat.send) */
+function parrotDm(u, text) {
+  const c = parrotCfg();
+  if (!(db.meta && db.meta.parrotOn)) throw new Error('🦜 ' + c.botName + ' сейчас выключен');
+  const k = dmKey(u.name, BOT_PEER);
+  const arr = db.dms[k] = db.dms[k] || [];
+  const msg = Object.assign(chatMsg(u, text, 'bot'), { to: c.botName });
+  arr.push(msg); if (arr.length > 150) arr.splice(0, arr.length - 150);
+  stats(u).msgs++; addXp(u, CFG.xpMsg);
+  markDirty();
+  pushTo(u.name, { t: 'chat.dm', msg, peer: BOT_PEER });
+  parrotReplyTo(u.name, text);
+  return {};
 }
 const PARROT_LOAD = Parrot.load();
 
@@ -914,6 +956,7 @@ const handlers = {
 
   /* ---------- ЧАТ ---------- */
   async 'chat.history'(ctx, m) {
+    if (m.with === BOT_PEER) return { msgs: (db.dms[dmKey(ctx.u.name, BOT_PEER)] || []).slice(-100), bot: parrotCfg().botName, on: !!(db.meta && db.meta.parrotOn) };
     if (m.with) { const o = getUser(m.with); if (!o) throw new Error('Игрок не найден'); return { msgs: (db.dms[dmKey(ctx.u.name, o.name)] || []).slice(-100) }; }
     const room = ROOM_IDS.includes(m.room) ? m.room : 'global';
     const box = room === 'global' ? db.chat : (db.rooms[room] || []);
@@ -924,6 +967,7 @@ const handlers = {
     if (u.mutedUntil && u.mutedUntil > now()) throw new Error('Вы заглушены до ' + new Date(u.mutedUntil).toLocaleString('ru-RU'));
     if (limited('chat:' + u.name, 5, 6000)) throw new Error('Не так быстро');
     const text = cleanText(m.text, CFG.chatMax); if (!text) throw new Error('Пустое сообщение');
+    if (m.to === BOT_PEER) return parrotDm(u, text);
     if (m.to) {
       const o = getUser(m.to); if (!o) throw new Error('Игрок не найден');
       if (!u.friends.includes(o.name)) throw new Error('Личные сообщения доступны только друзьям');
@@ -939,8 +983,6 @@ const handlers = {
     box.push(msg); if (box.length > CFG.chatMax) box.splice(0, box.length - CFG.chatMax);
     stats(u).msgs++; addXp(u, CFG.xpMsg);
     markDirty(); pushAll({ t: 'chat.msg', msg });
-    /* ParrotAI отвечает в общем чате, если его спросили (включено в админке) */
-    if (room === 'global' && db.meta && db.meta.parrotOn && isParrotTarget(text, parrotCfg())) parrotReply(text, room);
     return {};
   },
   async 'chat.react'(ctx, m) {
@@ -1623,25 +1665,27 @@ wss.on('connection', (ws, req) => {
     const reply = (o) => { if (m.id != null) send(ws, Object.assign({ re: m.id }, o)); };
     try {
       if (m.t === 'auth') {
-        const rec = db.tokens[sha256(String(m.token || '')).toString('hex')];
-        const u = rec && db.users[rec.user];
+        const tr = tokenRec(m.token);
+        const u = tr && db.users[tr.rec.user];
         if (!u) { reply({ ok: false, err: 'auth' }); return ws.close(4000, 'bad token'); }
         /* обязательные обновления: старая сборка играть не может.
            Сборка без версии (браузер/разработка) пропускается. */
         const cv = String(m.version || '').trim().replace(/^v/i, '');
         const pv = currentVersion();
         if (cv && pv && ReleasePlan.cmpVersion(cv, pv) < 0) {
-          reply({ ok: false, err: 'update', needUpdate: { version: pv, url: GH_REPO ? 'https://github.com/' + GH_REPO + '/releases/latest' : '' } });
+          reply({ ok: false, err: 'update', needUpdate: { version: pv, url: GH_REPO ? 'https://github.com/' + GH_REPO + '/releases/latest' : '', assets: verInfo().assets } });
           return ws.close(4004, 'update required');
         }
         const b = banInfo(u); if (b) { reply({ ok: false, err: banText(b) }); return ws.close(4001, 'banned'); }
         ctx = { u, ip }; clearTimeout(authTimer);
+        /* активная сессия продлевается, пока игрок заходит */
+        tr.rec.at = now(); tr.rec.exp = now() + SESSION_MS;
         const set = conns.get(u.name) || new Set(); const first = set.size === 0; set.add(ws); conns.set(u.name, set);
         u.lastSeen = now();
         if (!u.lastDaily || now() - u.lastDaily > 20 * 3600000) { u.lastDaily = now(); addXp(u, CFG.xpDaily); setTimeout(() => pushTo(u.name, { t: 'toast', text: '🗓️ Ежедневный вход: +' + CFG.xpDaily + ' опыта' }), 400); }
         markDirty();
         if (first) friendsPresence(u);
-        reply({ ok: true, me: meInfo(u), pending: u.pending.length });
+        reply({ ok: true, me: meInfo(u), pending: u.pending.length, sessionUntil: tr.rec.exp });
         if (RELEASE.running) send(ws, { t: 'sys.lock', on: true, text: RELEASE.text });
         const crm = cardRoomOf(u.name);
         if (crm) { if (crm.state === 'lobby') send(ws, { t: 'card.room', room: cardView(crm, u.name) }); else send(ws, { t: 'card.state', game: cardGameView(crm, u.name) }); }

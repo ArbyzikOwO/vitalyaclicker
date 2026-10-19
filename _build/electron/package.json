@@ -13,7 +13,8 @@
   },
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --publish never"
+    "dist": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
   },
   "build": {
     "appId": "com.vitalyaclicker.app",
@@ -42,6 +43,20 @@
     },
     "portable": {
       "artifactName": "VitalyaClicker.exe"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "category": "Game",
+      "synopsis": "Кликер-игра с онлайн-режимом",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "VitalyaClicker.AppImage"
     }
   },
   "devDependencies": {

@@ -5,10 +5,10 @@
  *   window.VC_SERVER    — адрес сервера по умолчанию
  *   window.VC_REPO      — "владелец/репозиторий" (релизы + server.txt)
  *   window.VC_VERSION   — версия из version.json
- *   window.VC_PLATFORM  — "win" | "android" (нужно автообновлению)
+ *   window.VC_PLATFORM  — "win" | "android" | "linux" (нужно автообновлению)
  *
  * Запуск:  node prepare.js
- * Переменные: VC_SERVER, VC_REPO, VC_VERSION
+ * Переменные: VC_SERVER, VC_REPO, VC_VERSION, VC_TARGET (win|linux)
  */
 const fs = require('fs');
 const path = require('path');
@@ -22,6 +22,9 @@ function readJson(p, def) { try { return JSON.parse(fs.readFileSync(p, 'utf8'));
 const VERSION = process.env.VC_VERSION || readJson(path.join(ROOT, 'version.json'), {}).version || '1.0.0';
 const REPO = process.env.VC_REPO || 'ArbyzikOwO/vitalyaclicker';
 const SERVER = process.env.VC_SERVER || 'http://localhost:3000';
+/* куда собираем: VC_TARGET=linux делает стейдж Electron для Linux (AppImage),
+   иначе — для Windows. Android-копия готовится всегда. */
+const TARGET = String(process.env.VC_TARGET || 'win').trim().toLowerCase() === 'linux' ? 'linux' : 'win';
 
 const FILES = ['index.html', 'sad.html', 'online.js', 'online.css', 'anticlick.js', 'updater.js', 'roulette.js', 'icon.png', 'version.json'];
 const DIRS = ['skins', 'audio'];
@@ -71,7 +74,7 @@ fs.writeFileSync(idx, withTag(html, ''));
 
 /* копии стейджа для конкретных сборок (у каждой свой VC_PLATFORM) */
 const targets = [
-  { dir: path.join(BUILD, 'electron', 'stage'), platform: 'win' },
+  { dir: path.join(BUILD, 'electron', 'stage'), platform: TARGET },
   { dir: path.join(BUILD, 'mobile', 'www'), platform: 'android' }
 ];
 const copied = [];
@@ -89,4 +92,5 @@ console.log('stage: ' + STAGE + ' (' + n + ' корневых файлов)');
 console.log('версия: ' + VERSION);
 console.log('репозиторий: ' + REPO);
 console.log('сервер: ' + SERVER);
+console.log('цель: ' + TARGET);
 console.log('копии: ' + copied.join(', '));
