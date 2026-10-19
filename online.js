@@ -57,7 +57,7 @@ const EMOJI_FALLBACK = ['👍', '🔥', '😂', '😮', '😢', '❤️', '💀'
 let chat = { global: [], rooms: {}, dms: {}, room: 'global', unread: new Set(), reactFor: null };
 let friends = { friends: [], incoming: [], outgoing: [] };
 let cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [], timer: null, busy: false, timers: [], defTurn: 60000, opt: { deck: 36, transfer: true, toEnd: true, turnMs: 60000 } };
-let duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0 };
+let duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0, timer: null };
 let prof = null, top = null, bank = null;
 let arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 };
 let adm = { users: [], stats: null, q: '', audit: null };
@@ -1429,6 +1429,7 @@ function duelSpin(room) {
   });
 }
 function renderDuelRoom(d, room) {
+  clearInterval(duel.timer); duel.timer = null;
   const B = room.bet, you = room.you || {}, pot = B * room.players.length;
   const head = `<div class="ol-rou-head"><h3>🎡 Рулетка · банк 🪙 ${F(pot)}</h3><span class="ol-dim">ставка 🪙 ${F(B)} · ${room.players.length} из ${room.max}</span></div>`;
   if (room.state === 'lobby') {
@@ -1457,6 +1458,7 @@ function renderDuelRoom(d, room) {
           <div class="ol-row"><button class="ol-btn sec" data-act="duel-undo" style="flex:1">↩ Снять</button><button class="ol-btn sec" data-act="duel-clear" style="flex:1">Очистить</button></div>
           <button class="ol-btn ol-rou-spin" data-act="duel-ready"${(!ready && stake === B) ? '' : ' disabled'}>${ready ? '✅ Ждём игроков' : '🎡 Готов'}</button>
           <div class="ol-duel-readybar">${rows}</div>
+          <div class="ol-dim" id="duelTime" style="margin-top:6px"></div>
           <button class="ol-btn sec" data-act="duel-leave" style="margin-top:6px">🚪 Выйти</button>
         </div>
       </div>
@@ -1464,6 +1466,8 @@ function renderDuelRoom(d, room) {
       <div class="ol-sub-note" style="margin-top:10px">Правый клик по полю (или Shift + клик) снимает фишку с этого поля.</div>
     </div>`;
     drawWheelRest($('duelCv'), null, 260);
+    duelUpdateTimer();
+    duel.timer = setInterval(duelUpdateTimer, 500);
     return;
   }
   /* розыгрыш: колесо + итоги по игрокам */
@@ -1477,6 +1481,12 @@ function renderDuelRoom(d, room) {
     <div class="ol-list" style="margin-top:8px">${rows}</div>
     <div class="ol-row" style="margin-top:10px"><button class="ol-btn" data-act="duel-room-close" style="flex:1">🎡 Ещё игру</button></div></div>`;
   duelSpin(room);
+}
+/* обратный отсчёт на раскладку фишек: когда время выйдет, сервер вернёт ставки */
+function duelUpdateTimer() {
+  const el = $('duelTime'); if (!el) return;
+  const dl = duel.room && duel.room.deadline;
+  el.textContent = dl ? '⏳ На раскладку осталось ' + Math.max(0, Math.ceil((dl - Date.now()) / 1000)) + ' с' : '⏳ Без ограничения по времени';
 }
 function renderDuel() {
   const d = $('olSub-duel'); if (!d) return;
