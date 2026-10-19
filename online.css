@@ -302,3 +302,11 @@
 .ol-war-count{font-size:11px;font-weight:900;color:#cfe0ff}
 @keyframes warflip{from{transform:rotateY(90deg) scale(.86);opacity:.15}to{transform:none;opacity:1}}
 @keyframes warpulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+/* ---------- лидерборды: выбор таблицы и полоски ---------- */
+.ol-top-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.ol-top-chip{font:inherit;font-size:11px;font-weight:800;padding:6px 10px;border-radius:20px;cursor:pointer;color:#cfe0ff;background:#131926;border:1px solid #2b3548}
+.ol-top-chip:hover{border-color:#3d4a63}
+.ol-top-chip.on{color:#2a1c00;background:linear-gradient(180deg,#ffe38a,#ff9f1c);border-color:#ffc93c}
+.ol-top-row{position:relative;overflow:hidden}
+.ol-top-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(255,201,60,.20),rgba(255,201,60,.04));pointer-events:none}
+.ol-top-row>*{position:relative}

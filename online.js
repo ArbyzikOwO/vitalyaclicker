@@ -1635,20 +1635,45 @@ async function openProfile(name) {
 }
 function closeProfile() { const m = document.getElementById('olProfileModal'); if (m) m.remove(); }
 
-/* ---------- лидерборд ---------- */
+/* ---------- лидерборды (несколько таблиц) ---------- */
+const TOP_BOARDS = [
+  ['money', '🪙 Монеты', 'Баланс облака (вклады в банке не учитываются).'],
+  ['xp', '🏅 Опыт', 'Опыт растёт за чат, переводы, карточные столы и дуэли, плюс ежедневный вход.'],
+  ['clicks', '👆 Клики', 'Всего кликов в игре — берётся из облачного сохранения.'],
+  ['garden', '🌱 Сад', 'Деньги, которые лежат в саду.'],
+  ['wins', '🏆 Победы', 'Победы в блэкджеке, карточных столах и дуэлях.'],
+  ['msgs', '💬 Сообщения', 'Сообщения в общем чате.'],
+];
+let topBoard = 'money';
 async function refreshTop() {
   if (!authed) return;
   try { top = await req('leaderboard'); } catch (e) {}
   renderTop();
 }
+/* как показать значение выбранной таблицы */
+function topValue(b, v) {
+  if (b === 'money' || b === 'garden') return '🪙 ' + F(v);
+  if (b === 'xp') return F(v) + ' XP';
+  if (b === 'wins') return '🏆 ' + F(v);
+  return F(v);
+}
 function renderTop() {
   const d = $('olSub-top'); if (!d) return;
   if (!top) { d.innerHTML = '<div class="ol-box"><div class="ol-empty">Загрузка рейтинга…</div></div>'; return; }
+  const chips = TOP_BOARDS.map(b => `<button class="ol-top-chip${b[0] === topBoard ? ' on' : ''}" data-act="top-board" data-b="${b[0]}">${b[1]}</button>`).join('');
+  const rowsArr = top[topBoard] || [];
+  const max = Math.max(1, ...rowsArr.map(x => x.v || 0));
   const medal = i => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
-  const xpRows = top.xp.map((u, i) => `<div class="ol-item"><span class="grow"><span class="ol-dim">${medal(i)}</span> <span class="ol-pres${u.online ? ' on' : ''}"></span>${avaSmall(u)}${nickHTML(u)}${roleTag(u)} <span class="ol-dim">· ур. ${u.level}</span></span><span class="ol-tag">${u.xp} XP</span></div>`).join('') || '<div class="ol-empty">Пусто</div>';
-  const mRows = top.money.map((u, i) => `<div class="ol-item"><span class="grow"><span class="ol-dim">${medal(i)}</span> <span class="ol-pres${u.online ? ' on' : ''}"></span>${avaSmall(u)}${nickHTML(u)}${roleTag(u)} <span class="ol-dim">· ур. ${u.level}</span></span><span class="ol-tag gold">🪙 ${F(u.money)}</span></div>`).join('') || '<div class="ol-empty">Пусто</div>';
-  d.innerHTML = `<div class="ol-box"><h3>🏆 Лидеры по опыту</h3><div class="ol-sub-note">Опыт растёт за чат, переводы, карточные столы и дуэли, плюс ежедневный вход.</div><div class="ol-list">${xpRows}</div></div>
-    <div class="ol-box"><h3>💰 Богатейшие игроки</h3><div class="ol-sub-note">Баланс облака (вклады в банке не учитываются). Всего игроков: ${top.total}.</div><div class="ol-list">${mRows}</div></div>`;
+  const rows = rowsArr.map((u, i) => {
+    const pct = Math.max(3, Math.round((u.v || 0) / max * 100));
+    return `<div class="ol-item ol-top-row"><i class="ol-top-bar" style="width:${pct}%"></i><span class="grow"><span class="ol-dim">${medal(i)}</span> <span class="ol-pres${u.online ? ' on' : ''}"></span>${avaSmall(u)}${nickHTML(u)}${roleTag(u)} <span class="ol-dim">· ур. ${u.level}</span></span><span class="ol-tag gold">${esc(topValue(topBoard, u.v || 0))}</span></div>`;
+  }).join('') || '<div class="ol-empty">Пока пусто — станьте первым!</div>';
+  const cur = TOP_BOARDS.filter(b => b[0] === topBoard)[0] || TOP_BOARDS[0];
+  d.innerHTML = `<div class="ol-box">
+    <div class="ol-rou-head"><h3>🏆 Лидеры</h3><button class="ol-mini" data-act="top-refresh" title="Обновить">🔄</button></div>
+    <div class="ol-top-chips">${chips}</div>
+    <div class="ol-sub-note">${cur[2]} Всего игроков: ${top.total}. Таблица обновляется сама.</div>
+    <div class="ol-list">${rows}</div></div>`;
 }
 
 /* ---------- админка ---------- */
@@ -1795,6 +1820,8 @@ function onClick(e) {
     case 'register': return authSubmit(true);
     case 'logout': return logout();
     case 'reconnect': kickedReason = ''; retry = 0; if (ws) { try { ws.close(); } catch (x) {} } stopReconnect = false; return setTimeout(connect, 150);
+    case 'top-board': if (el.dataset.b) { topBoard = el.dataset.b; renderTop(); } return;
+    case 'top-refresh': return refreshTop();
     case 'cloud-push': return pushSave(true).then(() => T('☁️ Сохранено в облаке'));
     case 'cloud-pull': if (confirm('Заменить локальное сохранение версией из облака?')) applyCloud().catch(x => T('❌ ' + x.message)); return;
     case 'tr-send': return doTransfer();

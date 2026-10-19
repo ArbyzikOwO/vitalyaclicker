@@ -13,13 +13,14 @@ const ok = (c, msg) => { if (c) { pass++; console.log('  ✓', msg); } else { fa
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
-function makeSave(click) {
+function makeSave(click, clicks) {
   const b = Buffer.alloc(120);
   b.writeUInt32LE(0x56434442, 0); b.writeUInt32LE(24, 4);
   const v = { click, auto: 0, casino: 0, crypto: 0, mining: 0 };
   const s = Object.keys(v).sort().map(k => k + ':' + Math.floor(v[k])).join('|');
   b.writeUInt32LE(fnv(s), 8);
   ['click', 'auto', 'casino', 'crypto', 'mining'].forEach((k, i) => b.writeDoubleLE(v[k], 12 + i * 8));
+  b.writeDoubleLE(clicks || 0, 12 + 5 * 8);   /* счётчик кликов (в контрольную сумму не входит) */
   return b.toString('base64');
 }
 
@@ -111,7 +112,7 @@ function authTry(token, version) {
       }
       return { act: 'take' };
     }
-    if (v.can.pass && (v.hand.length > 3 || guard3())) return { act: 'pass' };
+    if (v.can.pass && (v.hand.length > 5 || guard3())) return { act: 'pass' };
     const ranks = new Set(v.table.map(p => p.a.r));
     for (let k = 0; k < v.hand.length; k++) if (v.can.first || ranks.has(v.hand[k].r)) return { act: 'attack', card: k };
     return v.can.pass ? { act: 'pass' } : null;
@@ -227,6 +228,23 @@ function authTry(token, version) {
   ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === botCount, 'выключенный бот молчит');
   r = await A.req('admin.parrot', { cfg: { botName: 'ParrotAI', trigger: 'q:', delaySec: 1 } });
   ok(r.ok && r.cfg.botName === 'ParrotAI' && r.cfg.trigger === 'q:', 'настройки бота возвращены');
+
+  console.log('— Таблицы лидеров');
+  r = await A.req('leaderboard');
+  ok(r.ok && Array.isArray(r.xp) && Array.isArray(r.money), 'таблицы лидеров отдаются клиенту');
+  ok(['clicks', 'garden', 'wins', 'msgs'].every(k => Array.isArray(r[k])), 'все шесть таблиц на месте');
+  ok(r.total >= 3, 'счётчик игроков');
+  ok(r.money.length >= 1 && r.money.every(x => x.v > 0), 'в таблице монет только игроки с деньгами');
+  ok(r.money.every((x, i, a) => !i || a[i - 1].v >= x.v), 'монеты отсортированы по убыванию');
+  ok(r.xp.every((x, i, a) => !i || a[i - 1].v >= x.v), 'опыт отсортирован по убыванию');
+  r = await A.req('save.put', { main: makeSave(1e9, 777), garden: JSON.stringify({ money: 5e8 }), baseRev: 1 });
+  ok(r.ok, 'сохранение с кликами и садом принято');
+  r = await A.req('leaderboard');
+  const clickRow = r.clicks.filter(x => x.name === 'Alice')[0];
+  ok(clickRow && clickRow.v === 777, 'клики в таблице берутся из сохранения');
+  const gardenRow = r.garden.filter(x => x.name === 'Alice')[0];
+  ok(gardenRow && gardenRow.v === 5e8, 'сад в таблице берётся из сохранения');
+  ok(r.wins.every(x => x.v > 0), 'таблица побед без пустых строк');
 
   console.log('— Выпуск обновления');
   /* Важно: Carol (C) выше была забанена и кикнута — её соединение закрыто, поэтому здесь B. */
@@ -353,7 +371,7 @@ function authTry(token, version) {
   const war = await cardMatch('war', [A, B, C2], 20000, warGesture, 400);
   ok(war.ok && war.g.over, 'пьяница: партия доиграна вручную (' + war.g.log.slice(-1)[0] + ')');
   ok(war.okSum && war.pot === 60000, 'пьяница: банк 60000 и деньги сходятся');
-  const durak = await cardMatch('durak', [A, B, C2], 20000, durakGesture, 200);
+  const durak = await cardMatch('durak', [A, B, C2], 20000, durakGesture, 600);
   ok(durak.ok && durak.g.over, 'дурак: партия доиграна (' + durak.g.log.slice(-1)[0] + ')');
   ok(durak.okSum && durak.pot === 60000, 'дурак: банк 60000 и деньги сходятся');
   const cheat = await cardMatch('cheat', [A, B, C2], 20000, cheatGesture, 200);

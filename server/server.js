@@ -837,6 +837,9 @@ function parrotReply(question, room) {
 }
 const PARROT_LOAD = Parrot.load();
 
+/* кэш таблиц лидеров: пересчёт не чаще раза в минуту */
+let lbCache = { at: 0, data: null };
+
 const handlers = {
   async ping() { return {}; },
 
@@ -1022,13 +1025,32 @@ const handlers = {
       self: u.name === ctx.u.name, friend: (ctx.u.friends || []).indexOf(u.name) >= 0,
       incoming: (ctx.u.incoming || []).indexOf(u.name) >= 0, outgoing: (ctx.u.outgoing || []).indexOf(u.name) >= 0 };
   },
+  /* Таблицы лидеров: считаем прямо по облачным данным (топ-20, кэш на минуту) */
   async 'leaderboard'(ctx) {
     const all = Object.values(db.users);
-    const byXp = all.slice().sort((a, b) => (b.xp || 0) - (a.xp || 0)).slice(0, 20)
-      .map(u => Object.assign(pub(u), { online: isOnline(u.name), xp: u.xp || 0 }));
-    const byMoney = all.slice().sort((a, b) => avail(b) - avail(a)).slice(0, 20)
-      .map(u => Object.assign(pub(u), { online: isOnline(u.name), money: avail(u) }));
-    return { xp: byXp, money: byMoney, total: all.length };
+    const cached = lbCache.data;
+    const many = all.length > 10;   /* на маленьком сервере пересчитываем каждый раз — таблицы всегда свежие */
+    if (cached && many && now() - lbCache.at < 60000) return cached.data;
+    const saves = new Map();
+    const si = u => {   /* разбор сохранения нужен только для кликов и сада — считаем один раз */
+      if (!saves.has(u.name)) { let p = null; try { p = u.save ? parseSave(u.save.main, u.save.garden) : null; } catch (e) { p = null; } saves.set(u.name, p && p.ok ? p : null); }
+      return saves.get(u.name);
+    };
+    const winsOf = u => { const s = stats(u); return (s.bjWins || 0) + (s.duelWins || 0) + (s.cardWins || 0); };
+    const board = (val, key) => all.map(u => ({ u, v: Math.max(0, Math.floor(val(u) || 0)) }))
+      .filter(r => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 20)
+      .map(r => Object.assign(pub(r.u), { online: isOnline(r.u.name), v: r.v, [key]: r.v }));
+    const data = {
+      xp: board(u => u.xp || 0, 'xp'),
+      money: board(u => avail(u), 'money'),
+      clicks: board(u => { const p = si(u); return p ? p.clicks : 0; }, 'clicks'),
+      garden: board(u => { const p = si(u); return p ? p.gardenMoney : 0; }, 'garden'),
+      wins: board(winsOf, 'wins'),
+      msgs: board(u => stats(u).msgs || 0, 'msgs'),
+      total: all.length, at: now()
+    };
+    lbCache = { at: now(), data: data };
+    return data;
   },
 
   /* ---------- ОНЛАЙН-БАНК ---------- */
