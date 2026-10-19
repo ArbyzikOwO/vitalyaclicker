@@ -1287,6 +1287,8 @@ function wipeAllSaves() {
   try { localStorage.removeItem(SAVE_KEY); } catch(e){}
   try { localStorage.removeItem('sad_data.bin'); } catch(e){}
   try { localStorage.removeItem('mafia_skin_owned'); } catch(e){}
+  /* прогресс «Работ» тоже начинается заново: викторину можно пройти снова */
+  try { localStorage.removeItem('vc_works'); } catch(e){}
 }
 
 function cheat(reason) {
