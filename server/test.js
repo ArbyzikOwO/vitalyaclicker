@@ -2,6 +2,7 @@
 /* Сквозной тест сервера: node test.js */
 const os = require('os'), fs = require('fs'), path = require('path');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vc-test-'));
+process.env.PRICES_FILE = path.join(process.env.DATA_DIR, 'prices.json');   /* тестовые цены не трогают боевой configs/prices.json */
 process.env.ADMIN_CODE = 'test-admin-code-' + process.pid;   /* код админки: только для тестов */
 const ADMIN_CODE = process.env.ADMIN_CODE;
 const WebSocket = require('ws');
@@ -245,6 +246,26 @@ function authTry(token, version) {
   const gardenRow = r.garden.filter(x => x.name === 'Alice')[0];
   ok(gardenRow && gardenRow.v === 5e8, 'сад в таблице берётся из сохранения');
   ok(r.wins.every(x => x.v > 0), 'таблица побед без пустых строк');
+
+  console.log('— Цены с сервера');
+  r = await A.req('price.get', { key: 'skin.102', def: 10e6 });
+  ok(r.ok && r.value === 10e6, 'цена по умолчанию запоминается на сервере');
+  r = await A.req('price.get', { key: 'skin.102', def: 5 });
+  ok(r.ok && r.value === 10e6, 'сервер отдаёт сохранённую цену, а не клиентскую');
+  ok(!(await A.req('price.get', { key: 'плохой ключ!', def: 1 })).ok, 'кривой ключ цены отклонён');
+  ok(!(await A.req('price.get', { key: 'skin.999', def: -1 })).ok, 'отрицательное значение по умолчанию отклонено');
+  ok(!(await B.req('admin.price.set', { key: 'skin.102', value: 1 })).ok, 'не-админ не может менять цены');
+  r = await A.req('admin.price.set', { key: 'skin.102', value: 7.5e6 });
+  ok(r.ok && r.prices['skin.102'] === 7.5e6, 'владелец поменял цену');
+  r = await A.req('price.get', { key: 'skin.102', def: 1 });
+  ok(r.ok && r.value === 7.5e6, 'новая цена видна клиентам');
+  ok(!(await A.req('admin.price.set', { key: 'skin.102', value: -5 })).ok, 'отрицательная цена отклонена');
+  r = await A.req('admin.prices');
+  ok(r.ok && typeof r.prices === 'object' && r.prices['skin.102'] === 7.5e6, 'список цен для админки');
+  const lp = await authTry(ra.token);
+  ok(lp.reply && lp.reply.ok && lp.reply.me.prices && lp.reply.me.prices['skin.102'] === 7.5e6, 'цены приходят вместе с профилем при входе');
+  const apiPrices = await (await fetch(`http://127.0.0.1:${port}/api/prices`)).json();
+  ok(apiPrices.ok && apiPrices.prices['skin.102'] === 7.5e6, 'HTTP /api/prices отдаёт тот же каталог');
 
   console.log('— Выпуск обновления');
   /* Важно: Carol (C) выше была забанена и кикнута — её соединение закрыто, поэтому здесь B. */

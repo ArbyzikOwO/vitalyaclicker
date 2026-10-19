@@ -19,3 +19,4 @@ tools/build.config.json
 server/data/
 server/secret.json
 node_modules/
+configs/prices.json

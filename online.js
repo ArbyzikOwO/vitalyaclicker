@@ -60,8 +60,34 @@ let cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [],
 let duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0, timer: null };
 let prof = null, top = null, bank = null;
 let arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 };
-let adm = { users: [], stats: null, q: '', audit: null, parrot: null };
+let adm = { users: [], stats: null, q: '', audit: null, parrot: null, prices: null };
 let players = { list: [], q: '', total: 0, online: 0 };
+
+/* ---------- цены с сервера (порт из второй версии) ---------- */
+let serverPrices = {};
+const priceAsked = new Set();
+function setPrices(p) {
+  if (!p || typeof p !== 'object') return;
+  serverPrices = Object.assign({}, serverPrices, p);
+  adm.prices = Object.assign({}, adm.prices || {}, p);
+  try { window.SERVER_PRICES = serverPrices; } catch (e) {}
+  try { if (typeof window.VCApplyPrices === 'function') window.VCApplyPrices(); } catch (e) {}
+  if (sub === 'admin') renderAdmin();
+}
+/* цену, которой ещё нет на сервере, спрашиваем один раз и запоминаем */
+function ensurePrice(k, d) {
+  if (serverPrices[k] != null) return serverPrices[k];
+  if (!authed || !ws || priceAsked.has(k)) return d;
+  priceAsked.add(k);
+  req('price.get', { key: k, def: d }).then(r => {
+    if (r && typeof r.value === 'number') {
+      serverPrices[k] = r.value;
+      try { window.SERVER_PRICES = serverPrices; } catch (e) {}
+      try { if (typeof window.VCApplyPrices === 'function') window.VCApplyPrices(); } catch (e) {}
+    }
+  }).catch(() => {});
+  return d;
+}
 let walletBusy = false, walletAgain = false;
 const ONLY_GLOBAL = [{ id: 'global', ico: '🌍', name: 'Общий чат' }];
 const rooms = () => ONLY_GLOBAL;
@@ -142,6 +168,7 @@ function connect() {
     try {
       const r = await req('auth', { token: meta.token, version: gameVersion() }, 8000);
       authed = true; me = r.me; cfg = me.cfg || cfg; retry = 0;
+      setPrices(me.prices);
       meta.name = me.name; saveMeta();
       setStatus(); buildPanel();
       await afterAuth();
@@ -355,6 +382,7 @@ function onPush(m) {
       break; }
     case 'toast': T(m.text); break;
     case 'role': if (me) { me.admin = !!m.admin; me.owner = !!m.owner; if (!me.admin && sub === 'admin') sub = 'profile'; buildPanel(); } break;
+    case 'prices': setPrices(m.prices); break;
     case 'ac.banned': try { if (typeof antiClickLock === 'function') antiClickLock(m.reason, 'server'); } catch (e) {} break;
     case 'kicked': kickedReason = m.reason || ''; stopReconnect = true; T('⛔ ' + kickedReason); setStatus(); break;
   }
@@ -1682,6 +1710,7 @@ async function refreshAdmin() {
   try { const r = await req('admin.users', { q: adm.q }); adm.users = r.users; adm.stats = { total: r.total, online: r.online, tables: r.tables, games: r.games }; } catch (e) { T('❌ ' + e.message); }
   if (me.owner) { try { adm.rel = await req('admin.releasestatus'); } catch (e) {} }
   try { adm.parrot = await req('admin.parrot'); } catch (e) {}
+  try { const pr = await req('admin.prices'); adm.prices = pr.prices || {}; } catch (e) {}
   renderAdmin();
 }
 /* где сервер может собрать обновление (данные admin.releasestatus) */
@@ -1739,6 +1768,15 @@ async function parrotSave(reload) {
     T(reload ? '🦜 Модель перезагружена' : '🦜 Настройки сохранены');
   } catch (e) { T('❌ ' + e.message); }
 }
+function pricesBoxHtml() {
+  if (!adm.prices) return '';
+  const keys = Object.keys(adm.prices).sort();
+  const rows = keys.map(k => `<div class="ol-item"><span class="grow">${esc(k)}</span><input class="ol-in ol-price-in" data-price="${esc(k)}" type="number" min="0" step="1" value="${adm.prices[k]}"><button class="ol-mini" data-act="price-set" data-key="${esc(k)}" title="Сохранить">💾</button></div>`).join('');
+  return `<div class="ol-box"><h3>🏷️ Цены</h3>
+    <div class="ol-sub-note">Сервер раздаёт эти цены всем клиентам: поменял значение — игроки получили новую цену сразу, пересобирать игру не нужно. Ключ «skin.N» — цена скина с номером N.</div>
+    ${keys.length ? `<div class="ol-list">${rows}</div>` : '<div class="ol-empty">Каталог пуст: открой вкладку «Скины» в игре — она пришлёт значения по умолчанию.</div>'}
+    <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="priceKey" placeholder="новый ключ, напр. skin.110" maxlength="60" autocomplete="off"><input class="ol-in" id="priceVal" placeholder="цена" type="number" min="0" step="1"><button class="ol-btn" data-act="price-set" data-key="">➕ Добавить</button></div></div>`;
+}
 function renderAdmin() {
   const d = $('olSub-admin'); if (!d || !me || !me.admin) return;
   const s = adm.stats || { total: 0, online: 0, tables: 0, games: 0 };
@@ -1748,6 +1786,7 @@ function renderAdmin() {
     <div class="ol-row nowrap"><input class="ol-in" id="admBc" placeholder="Объявление всем игрокам" maxlength="200"><button class="ol-btn" data-act="adm-bc">📢</button></div>
     <div class="ol-row nowrap"><input class="ol-in" id="admQ" placeholder="Поиск игрока" value="${esc(adm.q)}"><button class="ol-btn sec" data-act="adm-refresh">🔄</button><button class="ol-btn sec" data-act="adm-audit">📜</button></div></div>
     ${parrotBoxHtml()}
+    ${pricesBoxHtml()}
     ${adm.audit ? '<div class="ol-box"><h3>📜 Журнал действий</h3><div class="ol-list">' + (adm.audit.length ? adm.audit.map(a => `<div class="ol-item"><span class="grow"><span class="ol-dim">${hhmm(a.at)}</span> <b>${esc(a.admin)}</b> ${esc(a.action)} <span class="ol-dim">${esc(a.detail)}</span></span></div>`).join('') : '<div class="ol-empty">Пусто</div>') + '</div></div>' : ''}
     ${me.owner ? `<div class="ol-box ol-owner"><h3>👑 Администраторы</h3>
       <div class="ol-sub-note">Админку выдаёт только владелец. Админы не могут назначать других админов и не могут трогать владельца.</div>
@@ -1927,6 +1966,21 @@ function onClick(e) {
     case 'adm-parrot-toggle': return req('admin.parrot', { on: !(adm.parrot && adm.parrot.on) }).then(r => { adm.parrot = r; renderAdmin(); T(r.on ? '🦜 ParrotAI включён' : '🦜 ParrotAI выключен'); }).catch(x => T('❌ ' + x.message));
     case 'adm-parrot-save': return parrotSave(false);
     case 'adm-parrot-reload': return parrotSave(true);
+    case 'price-set': {
+      const key = String(el.dataset.key || ($('priceKey') || {}).value || '').trim();
+      const inp = [...document.querySelectorAll('.ol-price-in')].find(i => i.dataset.price === key);
+      const raw = el.dataset.key ? (inp ? inp.value : '') : (($('priceVal') || {}).value || '');
+      if (!key) { T('❌ Укажи ключ цены'); return; }
+      const v = Number(String(raw).replace(',', '.').trim());
+      if (!isFinite(v) || v < 0) { T('❌ Некорректная цена'); return; }
+      req('admin.price.set', { key: key, value: v }).then(r => {
+        adm.prices = r.prices || adm.prices;
+        if (r.prices) setPrices(r.prices);
+        renderAdmin();
+        T('🏷️ Цена сохранена: ' + key);
+      }).catch(x => T('❌ ' + x.message));
+      return;
+    }
     case 'adm-bc': { const t = ($('admBc').value || '').trim(); if (!t) return; return req('admin.broadcast', { text: t }).then(() => { $('admBc').value = ''; T('📢 Отправлено'); }).catch(x => T('❌ ' + x.message)); }
     case 'adm-release': {
       const v = ($('relVer').value || '').trim().replace(/^v/i, '');
@@ -1994,7 +2048,7 @@ function reportClicks(clicks) {
   if (!authed) return Promise.resolve(false);
   return req('ac.report', { clicks }).then(() => true).catch(() => false);
 }
-window.Online = { tryAdminCode, reportClicks, pushSave: () => pushSave(true), connect };
+window.Online = { tryAdminCode, reportClicks, pushSave: () => pushSave(true), connect, ensurePrice };
 
 /* ============================================================
    СТАРТ

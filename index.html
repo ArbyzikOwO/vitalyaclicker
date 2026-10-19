@@ -645,6 +645,30 @@ function checkIntegrity() {
   return true;
 }
 
+/* ---------- ЦЕНЫ (порт из второй версии) ----------
+   Сервер — источник правды: цены приходят в профиле (me.prices) и обновляются
+   push-сообщением, когда владелец меняет их в админке. Если сервер ещё не
+   ответил, игра работает на своих значениях по умолчанию (офлайн-режим). */
+window.SERVER_PRICES = window.SERVER_PRICES || {};
+/* цена с сервера; если её ещё нет и мы онлайн — спрашиваем один раз */
+function SP(k, d) {
+  const S = window.SERVER_PRICES;
+  if (S && typeof S[k] === 'number') return S[k];
+  if (window.Online && window.Online.ensurePrice) return window.Online.ensurePrice(k, d);
+  return d;
+}
+/* цена скина: серверная, если владелец её задал, иначе своя из каталога */
+function skinPrice(s) {
+  if (!s) return 0;
+  if (s.price === Infinity) return Infinity;
+  const v = SP('skin.' + s.id, s.price);
+  return (typeof v === 'number' && isFinite(v)) ? v : s.price;
+}
+/* пересобрать карточки скинов, когда подъехали цены с сервера */
+window.VCApplyPrices = function () {
+  try { if (typeof renderSkins === 'function') renderSkins(); } catch (e) {}
+};
+
 /* ---------- СКИНЫ ---------- */
 const skinsFilesIds = {
   1: 'skins/arbyz.jpg', 2: 'skins/bananas.jpg', 3: 'skins/shahed.jpg',
@@ -1548,19 +1572,20 @@ function renderSkins() {
   state.ownedSkins.forEach(id => { counts[id] = (counts[id]||0) + 1; });
   $s.innerHTML = SKINS.map(s => {
     const count = counts[s.id] || 0; const owned = count > 0; const active = state.skin === s.id;
-    const canBuy = s.price !== Infinity && totalMoney() >= s.price;
+    const cost0 = skinPrice(s);
+    const canBuy = cost0 !== Infinity && totalMoney() >= cost0;
     const isConsumable = !!s.consumable;
     const cls = ['skin-card'];
     if (active && !isConsumable) cls.push('active');
     if (s.isSecret) cls.push('secret');
     if (s.special) cls.push('special');
-    if (!isConsumable && !owned && s.price !== Infinity && !canBuy) cls.push('disabled');
+    if (!isConsumable && !owned && cost0 !== Infinity && !canBuy) cls.push('disabled');
     if (isConsumable && !canBuy) cls.push('disabled');
     let foot;
-    if (isConsumable) { const cnt = count > 0 ? ` <span class="tag">×${count}</span>` : ''; foot = `<span class="price ${canBuy?'':'no'}">🪙 ${fmt(s.price)}</span>${cnt}`; }
+    if (isConsumable) { const cnt = count > 0 ? ` <span class="tag">×${count}</span>` : ''; foot = `<span class="price ${canBuy?'':'no'}">🪙 ${fmt(cost0)}</span>${cnt}`; }
     else if (owned) { const cnt = count > 1 ? ` ×${count}` : ''; foot = active ? `<span class="tag owned">Выбран${cnt}</span>` : `<span class="tag">Выбрать${cnt}</span>`; }
-    else if (s.price === Infinity) foot = `<span class="tag special">🎁 не продаётся</span>`;
-    else foot = `<span class="price ${canBuy?'':'no'}">🪙 ${fmt(s.price)}</span>`;
+    else if (cost0 === Infinity) foot = `<span class="tag special">🎁 не продаётся</span>`;
+    else foot = `<span class="price ${canBuy?'':'no'}">🪙 ${fmt(cost0)}</span>`;
     let topBadge = '';
     if (s.special) topBadge = '<div class="badge-special">специальный</div>';
     else if (s.isSecret) topBadge = '<div class="badge-secret">🔒 секрет</div>';
@@ -1570,7 +1595,7 @@ function renderSkins() {
     else if (s.isSecret && !owned) thumb = `<div class="skin-img"><span class="skin-lock">🔒</span></div>`;
     else thumb = `<div class="skin-img"><img src="${s.src}" alt="${s.name}" draggable="false" onerror="this.onerror=null;this.src='${brokenImg().replace(/'/g,"\\'")}';"></div>`;
     const noteStr = s.note ? ` <span style="color:#8792a6">(${s.note})</span>` : '';
-    return `<div class="${cls.join(' ')}" data-skin="${s.id}" data-cost="${(owned && !isConsumable)||s.price===Infinity?0:s.price}">${topBadge}${thumb}<div class="skin-name">${s.name}</div><div class="skin-mult">×${s.mult||1} доход${noteStr}</div><div>${foot}</div></div>`;
+    return `<div class="${cls.join(' ')}" data-skin="${s.id}" data-cost="${(owned && !isConsumable)||cost0===Infinity?0:cost0}">${topBadge}${thumb}<div class="skin-name">${s.name}</div><div class="skin-mult">×${s.mult||1} доход${noteStr}</div><div>${foot}</div></div>`;
   }).join('');
   const $cr = document.getElementById('craftList');
   $cr.innerHTML = `
@@ -1614,7 +1639,7 @@ document.getElementById('craftBtn').addEventListener('click', () => {
 /* =========================================================
    БАНДИТЫ (переписано)
    ========================================================= */
-function banditUnitPrice() { const s = SKINS.find(x => x.id === 102); return s ? s.price : 10e6; }
+function banditUnitPrice() { const s = SKINS.find(x => x.id === 102); return s ? skinPrice(s) : 10e6; }
 function banditMaxBuy() { return Math.max(1, Math.floor(totalMoney() / banditUnitPrice())); }
 function renderBanditSlider() {
   const slider = document.getElementById('banditSlider'); if (!slider) return;
@@ -1751,9 +1776,10 @@ document.body.addEventListener('click', e => {
     const owned = state.ownedSkins.includes(id);
     if (owned && !isConsumable) { if (state.skin === id) return; state.skin = id; toast(`Скин «${s.name}» надет 🎭`); }
     else {
-      if (s.price === Infinity) { toast('🎁 Его нельзя купить'); return; }
-      if (totalMoney() < s.price) { if (s.isSecret) toast(`🔒 Секрет: нужно 🪙 ${fmt(s.price)}`); else toast('Не хватает монет! 🪙'); return; }
-      if (!spendMoney(s.price)) return;
+      if (skinPrice(s) === Infinity) { toast('🎁 Его нельзя купить'); return; }
+      const sp = skinPrice(s);
+      if (totalMoney() < sp) { if (s.isSecret) toast(`🔒 Секрет: нужно 🪙 ${fmt(sp)}`); else toast('Не хватает монет! 🪙'); return; }
+      if (!spendMoney(sp)) return;
       state.ownedSkins.push(id);
       if (isConsumable) toast(`Куплен «${s.name}» (теперь ${state.ownedSkins.filter(x=>x===id).length})`);
       else { state.skin = id; toast(s.isSecret ? `🎉 СЕКРЕТ: «${s.name}»!` : `Куплен скин «${s.name}»!`); }
@@ -1897,8 +1923,8 @@ document.getElementById('betRow').addEventListener('click', e => {
 function buildSkinBetRow() {
   const row = document.getElementById('skinBetRow'); const counts = {};
   state.ownedSkins.forEach(id => { counts[id] = (counts[id]||0) + 1; });
-  const arr = Object.keys(counts).map(Number).filter(id => { const s = SKINS.find(x => x.id === id); return s && s.price !== Infinity && s.price > 0; });
-  row.innerHTML = arr.length ? arr.map(id => { const s = SKINS.find(x => x.id === id); const c = counts[id]; return `<button class="chip" data-skinbet="${id}" ${spinning?'disabled':''}>${s.name}${c>1?' ×'+c:''} (${fmt(s.price)})</button>`; }).join('') : '<div style="color:#8792a6;font-size:11px">Нет подходящих скинов</div>';
+  const arr = Object.keys(counts).map(Number).filter(id => { const s = SKINS.find(x => x.id === id); const p = s ? skinPrice(s) : Infinity; return p !== Infinity && p > 0; });
+  row.innerHTML = arr.length ? arr.map(id => { const s = SKINS.find(x => x.id === id); const c = counts[id]; return `<button class="chip" data-skinbet="${id}" ${spinning?'disabled':''}>${s.name}${c>1?' ×'+c:''} (${fmt(skinPrice(s))})</button>`; }).join('') : '<div style="color:#8792a6;font-size:11px">Нет подходящих скинов</div>';
 }
 document.getElementById('skinBetRow').addEventListener('click', e => {
   if (spinning) return;
@@ -1906,7 +1932,7 @@ document.getElementById('skinBetRow').addEventListener('click', e => {
   const id = Number(c.dataset.skinbet);
   const s = SKINS.find(x => x.id === id); if (!s) return;
   const idx = state.ownedSkins.indexOf(id); if (idx < 0) return;
-  if (Math.random() < ECON.casino.skinBetChance) { addMoney(s.price, 'casino'); toast(`🎭 Скин-ставка удачна: +${fmt(s.price)} 🪙`); }
+  if (Math.random() < ECON.casino.skinBetChance) { const sp = skinPrice(s); addMoney(sp, 'casino'); toast(`🎭 Скин-ставка удачна: +${fmt(sp)} 🪙`); }
   else {
     state.ownedSkins.splice(idx, 1);
     if (state.skin === id && !state.ownedSkins.includes(id)) state.skin = 0;

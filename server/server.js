@@ -61,6 +61,31 @@ const CFG = {
   bioMax: 140,            // максимальная длина описания профиля
 };
 
+/* ---------------- ЦЕНЫ (порт из второй версии) ----------------
+   configs/prices.json — плоский список { "ключ": число }. Файл не в
+   репозитории: его правит владелец, сервер — единственный источник правды.
+   Если цены в файле ещё нет, клиент присылает своё значение по умолчанию,
+   и сервер запоминает его (так каталог заполняется сам). */
+const PRICES_FILE = process.env.PRICES_FILE || path.join(ROOT, 'configs', 'prices.json');
+let prices = readJsonSafe(PRICES_FILE, {});
+if (!prices || typeof prices !== 'object' || Array.isArray(prices)) prices = {};
+function savePrices() {
+  try {
+    fs.mkdirSync(path.dirname(PRICES_FILE), { recursive: true });
+    const tmp = PRICES_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(prices, null, 2));
+    fs.renameSync(tmp, PRICES_FILE);
+  } catch (e) { console.error('цены: не удалось сохранить —', e.message); }
+}
+const priceKeyOk = k => /^[\w.]{1,60}$/.test(String(k || ''));
+function priceOr(k, def) {
+  if (!Object.prototype.hasOwnProperty.call(prices, k)) {
+    if (!isFinite(def) || def < 0 || def > 1e30) return null;
+    prices[k] = def; savePrices();
+  }
+  return prices[k];
+}
+
 /* предустановленные аватарки и градиенты ников */
 const AVATARS = ['🐱', '🐶', '🦊', '🐼', '🐸', '🐵', '🦁', '🐯', '🐨', '🐷', '🐙', '🦄', '👑', '💀', '🤖', '👽', '🎮', '🚀', '🔥', '⚡', '🍀', '💎', '🪙', '🎩'];
 const COLORS = [
@@ -458,6 +483,7 @@ async function api(req, res) {
   const json = (code, o) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify(o)); };
   if (req.method === 'OPTIONS') { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'POST,GET' }); return res.end(); }
   if (req.url === '/api/ping') return json(200, { ok: true, cfg: { fee: CFG.transferFee }, version: currentVersion(), release: !!RELEASE.running });
+  if (req.url === '/api/prices') return json(200, { ok: true, prices: prices });
   if (req.method !== 'POST') return json(404, { ok: false });
   let body; try { body = await readBody(req); } catch (e) { return json(400, { ok: false, err: 'Плохой запрос' }); }
   const ip = ipOf(req);
@@ -781,7 +807,7 @@ function summary(u) {
   return { rev: u.save.rev, updatedAt: u.save.updatedAt, device: u.save.device || '', money: p.ok ? p.money : 0, clicks: p.ok ? p.clicks : 0 };
 }
 function meInfo(u) {
-  return { name: u.display, admin: !!u.admin, owner: !!u.owner, rev: u.save ? u.save.rev : 0, avail: avail(u), xp: u.xp || 0, level: levelOf(u.xp), avatar: u.avatar || null, color: u.color || '', nameAt: u.nameAt || 0, cfg: { fee: CFG.transferFee, minTransfer: CFG.minTransfer, minBet: CFG.minBet, turnMs: CFG.turnMs, bankRate: CFG.bankRate, bankMin: CFG.bankMin, renameMs: CFG.renameMs, rooms: ROOMS.map(([id, ico, name]) => ({ id, ico, name })), emojis: EMOJIS, colors: COLORS, avatars: AVATARS } };
+  return { name: u.display, admin: !!u.admin, owner: !!u.owner, rev: u.save ? u.save.rev : 0, avail: avail(u), xp: u.xp || 0, level: levelOf(u.xp), avatar: u.avatar || null, color: u.color || '', nameAt: u.nameAt || 0, prices: prices, cfg: { fee: CFG.transferFee, minTransfer: CFG.minTransfer, minBet: CFG.minBet, turnMs: CFG.turnMs, bankRate: CFG.bankRate, bankMin: CFG.bankMin, renameMs: CFG.renameMs, rooms: ROOMS.map(([id, ico, name]) => ({ id, ico, name })), emojis: EMOJIS, colors: COLORS, avatars: AVATARS } };
 }
 function friendsView(u) {
   const f = n => { const x = getUser(n); return x ? Object.assign(pub(x), { online: isOnline(x.name) }) : null; };
@@ -1366,6 +1392,28 @@ const handlers = {
     markDirty(); kick(o.name, 'Пароль изменён администратором'); audit(ctx.u.display, 'admin.setpass', o.display); return {};
   },
   async 'admin.audit'(ctx) { need(ctx); return { log: db.audit.slice(-100).reverse() }; },
+  /* ---------- ЦЕНЫ: клиент спрашивает, владелец правит ---------- */
+  async 'price.get'(ctx, m) {
+    const k = String(m.key || '');
+    if (!priceKeyOk(k)) throw new Error('Некорректный ключ цены');
+    const v = priceOr(k, Number(m.def));
+    if (v == null) throw new Error('Для этой цены не задано значение');
+    return { key: k, value: v };
+  },
+  async 'price.list'(ctx) { return { prices: prices }; },
+  async 'admin.prices'(ctx) { need(ctx); return { prices: prices }; },
+  async 'admin.price.set'(ctx, m) {
+    need(ctx);
+    const k = String(m.key || '');
+    if (!priceKeyOk(k)) throw new Error('Некорректный ключ цены');
+    const v = Number(m.value);
+    if (!isFinite(v) || v < 0 || v > 1e30) throw new Error('Некорректная цена');
+    const old = prices[k];
+    prices[k] = v; savePrices();
+    audit(ctx.u.display, 'price.set', k + ': ' + old + ' → ' + v);
+    pushAll({ t: 'prices', prices: prices });
+    return { prices: prices };
+  },
   /* ParrotAI: включение/выключение, настройки, перезагрузка модели */
   async 'admin.parrot'(ctx, m) {
     need(ctx);

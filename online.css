@@ -310,3 +310,5 @@
 .ol-top-row{position:relative;overflow:hidden}
 .ol-top-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(255,201,60,.20),rgba(255,201,60,.04));pointer-events:none}
 .ol-top-row>*{position:relative}
+/* ---------- цены в админке ---------- */
+.ol-item .ol-price-in{width:120px;flex:none;text-align:right;padding:6px 8px;font-size:12px}
