@@ -407,6 +407,12 @@ window.VC_PLATFORM = window.VC_PLATFORM || 'web';
     <!-- ======================= -->
 
     <div class="crypto-box">
+      <h2>💼 РАБОТЫ</h2>
+      <div class="sub">Подработки за монеты. Уровень растёт за успехи — награда тоже.</div>
+      <div id="worksBox"></div>
+    </div>
+
+    <div class="crypto-box">
       <h2>📰 ПОСЛЕДНИЕ НОВОСТИ</h2>
       <div class="sub">20 последних событий</div>
       <div id="newsHistory" style="text-align:left"></div>
@@ -2201,7 +2207,280 @@ function renderMore() {
     const now = Date.now();
     $l.innerHTML = state.loans.map(l => { const hours = (now - l.startTime) / 3600000; const left = Math.max(0, l.hours - hours); const owed = loanOwed(l, now); return `<div class="gpu-card"><div>Взято: 🪙 ${fmt(l.amount)} на ${l.hours}ч</div><div>Осталось: ${left.toFixed(2)}ч · Долг: 🪙 ${fmt(owed)}</div></div>`; }).join('');
   }
+  renderWorks();
 }
+
+/* ============================================================
+   РАБОТЫ (раздел «Ещё»): киллер, дальнобойщик, викторина, найди лоха.
+   Перенесено из второй версии игры. Прогресс уровней — в localStorage
+   (ключ vc_works), награды идут в обычные деньги игры.
+   ============================================================ */
+const WK_KEY = 'vc_works';
+let wkState = {};
+try { wkState = JSON.parse(localStorage.getItem(WK_KEY) || '{}') || {}; } catch (e) { wkState = {}; }
+function wkSave() { try { localStorage.setItem(WK_KEY, JSON.stringify(wkState)); } catch (e) {} }
+const WK_DEFS = [
+  { id: 'killer',  name: '🎯 Киллер',        need: 1000,  desc: 'Наведи прицел на цель и выстрели. Попал — 50M и новый уровень, цель появляется снова. Играй сколько хочешь.' },
+  { id: 'trucker', name: '🚚 Дальнобойщик',  need: 2000,  desc: 'Провези машину 30 секунд, уворачиваясь от встречных. Награда 1B и новый уровень (встречные чуть быстрее).' },
+  { id: 'quiz',    name: '📝 Викторина',     need: 5000,  desc: 'Три вопроса, на каждый 30 секунд. Пройти можно один раз за игру.' },
+  { id: 'loh',     name: '🤡 Найди лоха',    need: 10000, desc: 'Лох появляется на секунду. Нажми — получишь монеты за клик × 10. С каждым уровнем лох показывается быстрее (минимум 350 мс).' },
+];
+/* уровни работ: +(уровень)% к награде. Уровень растёт за успех (попадание / доставка / поимка лоха) */
+const wkLvl = k => Math.max(1, Math.floor(wkState[k] || 1));
+const wkBonus = lvl => 1 + lvl / 100;
+const wkBonusTxt = lvl => '+' + lvl + '% к награде';
+const WK_ART = () => SKINS.filter(s => s.src);
+const wkRand = arr => arr[Math.floor(Math.random() * arr.length)];
+let wkTimeouts = [], wkInterval = null, wkRaf = null;
+function wkT(fn, ms) { const id = setTimeout(fn, ms); wkTimeouts.push(id); return id; }
+function wkClear() {
+  wkTimeouts.forEach(clearTimeout); wkTimeouts = [];
+  clearInterval(wkInterval); wkInterval = null;
+  if (wkRaf) cancelAnimationFrame(wkRaf); wkRaf = null;
+}
+function wkOpen(title, bodyHtml) {
+  wkClear();
+  let o = document.getElementById('wkOverlay'); if (o) o.remove();
+  o = document.createElement('div'); o.id = 'wkOverlay';
+  o.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(5,7,11,.92);display:flex;align-items:center;justify-content:center;padding:14px;color:#eef2f7;font-family:inherit;overflow-y:auto';
+  o.innerHTML = '<div style="width:100%;max-width:400px;margin:auto;background:linear-gradient(180deg,#1c2434,#12161f);border:1px solid #28303f;border-radius:18px;padding:16px;text-align:center">' +
+    '<div style="font-weight:900;font-size:16px;margin-bottom:10px">' + title + '</div><div id="wkBody">' + bodyHtml + '</div>' +
+    '<button id="wkClose" style="margin-top:12px;width:100%;padding:11px;border:none;border-radius:12px;background:#242d3d;color:#eef2f7;font-weight:800;cursor:pointer">Закрыть</button></div>';
+  document.body.appendChild(o);
+  const close = () => { wkClear(); o.remove(); renderWorks(); };
+  o.querySelector('#wkClose').onclick = close;
+  return { body: o.querySelector('#wkBody'), close, root: o };
+}
+const WK_BTN = 'width:100%;padding:12px;border:none;border-radius:12px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-weight:900;font-size:15px;cursor:pointer;margin-top:10px';
+
+/* ---------- киллер ---------- */
+function wkKiller() {
+  const W = 340, H = 340, VIEW = 62;
+  let lvl = wkLvl('killerLevel');
+  let t = null, R = 40, tx = 0, ty = 0, px = W / 2, py = H / 2;
+  const img = new Image();
+  const b = wkOpen('🎯 Киллер',
+    '<div id="wkLvl" style="font-size:13px;font-weight:800;color:#ffc93c;margin-bottom:6px"></div>' +
+    '<div style="font-size:12px;color:#8792a6;margin-bottom:8px">Веди прицел по полю (мышь или палец). Выстрел — кнопка или клик по полю. После попадания цель появляется снова — закрой окно, когда надоест.</div>' +
+    '<canvas id="wkCv" width="' + W + '" height="' + H + '" style="width:100%;max-width:' + W + 'px;border-radius:10px;background:#000;touch-action:none;cursor:crosshair"></canvas>' +
+    '<button id="wkShoot" style="' + WK_BTN + '">🔫 Выстрел</button><div id="wkMsg" style="font-size:12px;color:#8792a6;margin-top:8px"></div>');
+  const cv = b.body.querySelector('#wkCv'), ctx = cv.getContext('2d');
+  const lvlEl = b.body.querySelector('#wkLvl');
+  const showLvl = () => { lvlEl.textContent = 'Уровень ' + lvl + ' · ' + wkBonusTxt(lvl) + ' · награда 🪙 ' + fmt(Math.floor(50e6 * wkBonus(lvl))); };
+  const draw = () => {
+    ctx.fillStyle = '#1a1f2b'; ctx.fillRect(0, 0, W, H);
+    if (img.complete && img.naturalWidth) { ctx.save(); ctx.beginPath(); ctx.arc(tx, ty, R, 0, Math.PI * 2); ctx.clip(); ctx.drawImage(img, tx - R, ty - R, 2 * R, 2 * R); ctx.restore(); }
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(px, py, VIEW, 0, Math.PI * 2, true); ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px - VIEW, py); ctx.lineTo(px + VIEW, py); ctx.moveTo(px, py - VIEW); ctx.lineTo(px, py + VIEW); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.beginPath(); ctx.arc(px, py, VIEW, 0, Math.PI * 2); ctx.stroke();
+  };
+  /* новая цель: другой скин и позиция, прицел возвращается в центр */
+  const spawnTarget = () => {
+    t = wkRand(WK_ART()); R = Math.max(20, 60 - lvl * 4);
+    tx = R + 10 + Math.random() * (W - 2 * R - 20); ty = R + 10 + Math.random() * (H - 2 * R - 20);
+    px = W / 2; py = H / 2;
+    img.onload = draw; img.src = t.src; draw(); showLvl();
+  };
+  const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * (W / r.width), (e.clientY - r.top) * (H / r.height)]; };
+  /* прицел можно вести в любую точку поля, включая края: цель всегда достижима */
+  const aim = (x, y) => { px = Math.max(0, Math.min(W, x)); py = Math.max(0, Math.min(H, y)); draw(); };
+  cv.addEventListener('pointermove', e => { const [x, y] = pos(e); aim(x, y); });
+  cv.addEventListener('pointerdown', e => { try { cv.setPointerCapture(e.pointerId); } catch (err) {} const [x, y] = pos(e); aim(x, y); });
+  const kb = e => {
+    if (!document.getElementById('wkCv')) { window.removeEventListener('keydown', kb); return; }
+    const st = 6;
+    if (e.key === 'ArrowLeft') aim(px - st, py); if (e.key === 'ArrowRight') aim(px + st, py);
+    if (e.key === 'ArrowUp') aim(px, py - st); if (e.key === 'ArrowDown') aim(px, py + st);
+  };
+  window.addEventListener('keydown', kb);
+  const shoot = () => {
+    sfxPlay('awp', { duck: false });           /* выстрел: фоновая музыка не глушится */
+    if (Math.hypot(px - tx, py - ty) <= R) {
+      const reward = Math.floor(50e6 * wkBonus(lvl));
+      addMoney(reward, 'auto'); lvl++; wkState.killerLevel = lvl; wkSave();
+      const m = b.body.querySelector('#wkMsg'); if (m) m.textContent = 'Попадание! +🪙 ' + fmt(reward) + ' · уровень ' + lvl;
+      toast('🎯 Попал! +🪙 ' + fmt(reward));
+      spawnTarget();
+    } else {
+      const m = b.body.querySelector('#wkMsg'); if (m) m.textContent = 'Мимо. Попробуй ещё.';
+    }
+  };
+  cv.addEventListener('click', shoot);
+  b.body.querySelector('#wkShoot').onclick = shoot;
+  spawnTarget();
+}
+
+/* ---------- дальнобойщик ---------- */
+function wkTrucker() {
+  const W = 240, H = 400, LANES = 3, laneW = W / LANES, PY = H - 70;
+  const lvl = wkLvl('truckerLevel');
+  const baseV = Math.min(190, 70 + lvl * 4);                     /* скорость встречных (px/с): медленно, растёт с уровнем */
+  const spawnEvery = Math.max(0.85, 1.25 - lvl * 0.02);           /* интервал появления машин, с */
+  const reward = Math.floor(1e9 * wkBonus(lvl));
+  let lane = 1, cars = [], elapsed = 0, over = false, spawnAcc = 0, lastT = performance.now();
+  const b = wkOpen('🚚 Дальнобойщик · уровень ' + lvl,
+    '<canvas id="wkCv" width="' + W + '" height="' + H + '" style="width:100%;max-width:' + W + 'px;border-radius:10px;background:#2a2f3a"></canvas>' +
+    '<div style="display:flex;gap:10px;margin-top:10px"><button id="wkL" style="flex:1;padding:14px;border:none;border-radius:12px;background:#242d3d;color:#eef2f7;font-size:20px;cursor:pointer">◀</button><button id="wkR" style="flex:1;padding:14px;border:none;border-radius:12px;background:#242d3d;color:#eef2f7;font-size:20px;cursor:pointer">▶</button></div>' +
+    '<div id="wkMsg" style="font-size:12px;color:#8792a6;margin-top:8px">Держись 30 секунд. Столкновение — провал. Награда 🪙 ' + fmt(reward) + ' (' + wkBonusTxt(lvl) + ').</div>');
+  const cv = b.body.querySelector('#wkCv'), ctx = cv.getContext('2d');
+  const msg = t => { const el = b.body.querySelector('#wkMsg'); if (el) el.textContent = t; };
+  const move = d => { if (!over) lane = Math.max(0, Math.min(LANES - 1, lane + d)); };
+  b.body.querySelector('#wkL').onclick = () => move(-1);
+  b.body.querySelector('#wkR').onclick = () => move(1);
+  const keys = e => { if (!document.getElementById('wkCv')) { window.removeEventListener('keydown', keys); return; } if (e.key === 'ArrowLeft') move(-1); if (e.key === 'ArrowRight') move(1); };
+  window.addEventListener('keydown', keys);
+  const drawFrame = () => {
+    ctx.fillStyle = '#2a2f3a'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#ffc93c'; ctx.setLineDash([18, 16]); ctx.lineWidth = 3;
+    for (let i = 1; i < LANES; i++) { ctx.beginPath(); ctx.moveTo(i * laneW, 0); ctx.lineTo(i * laneW, H); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.font = '36px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const c of cars) ctx.fillText('🚗', c.l * laneW + laneW / 2, c.y);
+    ctx.fillText('🚚', lane * laneW + laneW / 2, PY);
+    ctx.fillStyle = '#ffc93c'; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('⏱ ' + Math.max(0, 30 - elapsed).toFixed(0) + ' c', 8, 16);
+  };
+  const end = (win) => {
+    over = true;
+    if (win) { addMoney(reward, 'auto'); wkState.truckerLevel = lvl + 1; wkSave(); toast('🚚 Груз доставлен! +🪙 ' + fmt(reward)); msg('Доставлено! +🪙 ' + fmt(reward) + ' · новый уровень ' + (lvl + 1)); wkT(() => b.close(), 1200); }
+    else { msg('Авария! Нажми «Закрыть» и попробуй снова.'); sfxPlay('mel-dyra'); }   /* проигрыш в дальнобойщике */
+  };
+  const frame = tm => {
+    if (over) return;
+    const dt = Math.min(0.05, (tm - lastT) / 1000); lastT = tm; elapsed += dt;
+    spawnAcc += dt;
+    if (spawnAcc > spawnEvery) { spawnAcc = 0; cars.push({ l: Math.floor(Math.random() * LANES), y: -40, v: baseV * (0.9 + Math.random() * 0.25) }); }
+    for (const c of cars) c.y += c.v * dt;
+    cars = cars.filter(c => c.y < H + 60);
+    if (cars.some(c => c.l === lane && Math.abs(c.y - PY) < 46)) { drawFrame(); end(false); return; }
+    drawFrame();
+    if (elapsed >= 30) { end(true); return; }
+    wkRaf = requestAnimationFrame(frame);
+  };
+  wkRaf = requestAnimationFrame(frame);
+}
+
+/* ---------- викторина (один раз за игру / перерождение) ---------- */
+const WK_QUIZ = [
+  { q: 'Продолжи песню: «Сливы виноград»', a: 'щавель омайгад' },
+  { q: 'Продолжи песню: «Да да нет нет»', a: 'да будет свет' },
+  { q: 'Продолжите: «Arbyzik»', a: 'owo' },
+  { q: 'Назовите город, который выше верхнего Новгорода', a: 'высший новгород' },
+];
+const wkNorm = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+function wkQuizPool() {
+  const skin = wkRand(WK_ART());
+  const pool = WK_QUIZ.concat([{ q: 'Укажите его название', a: skin.name, img: skin.src }]).sort(() => Math.random() - 0.5);
+  return pool.slice(0, 3);
+}
+function wkQuiz() {
+  const qs = wkQuizPool(); let i = 0, right = 0, left = 30;
+  const b = wkOpen('📝 Викторина',
+    '<div id="wkProg" style="font-size:12px;color:#8792a6"></div><div id="wkImg" style="margin:8px 0"></div>' +
+    '<div id="wkQ" style="font-size:15px;font-weight:800;margin:8px 0;min-height:40px"></div><div id="wkTime" style="font-size:13px;color:#ffc93c"></div>' +
+    '<input id="wkIn" maxlength="60" autocomplete="off" style="width:100%;box-sizing:border-box;padding:11px;border-radius:12px;border:1px solid #2b3548;background:#0e1219;color:#eef2f7;font-size:14px;margin-top:8px">' +
+    '<button id="wkOk" style="' + WK_BTN + '">Ответить</button>');
+  const $w = id => b.body.querySelector('#' + id);
+  const answer = ok => {
+    if (wkInterval) { clearInterval(wkInterval); wkInterval = null; }
+    if (ok) right++;
+    i++;
+    if (i < qs.length) show(); else finish();
+  };
+  const show = () => {
+    const q = qs[i];
+    $w('wkProg').textContent = 'Вопрос ' + (i + 1) + ' из 3';
+    $w('wkQ').textContent = q.q;
+    $w('wkImg').innerHTML = q.img ? '<img src="' + q.img + '" style="width:140px;height:140px;object-fit:cover;border-radius:12px">' : '';
+    $w('wkIn').value = ''; $w('wkIn').disabled = false; $w('wkOk').disabled = false; $w('wkIn').focus();
+    left = 30;
+    wkInterval = setInterval(() => {
+      left -= 0.2; $w('wkTime').textContent = '⏱ ' + Math.max(0, Math.ceil(left)) + ' с';
+      if (left <= 0) answer(false);
+    }, 200);
+  };
+  const finish = () => {
+    const reward = [0, 10e9, 100e9, 1e12][right];
+    if (reward) addMoney(reward, 'auto');
+    wkState.quizDone = true; wkSave();
+    $w('wkQ').textContent = 'Правильных ответов: ' + right + ' из 3' + (reward ? ' · награда +🪙 ' + fmt(reward) : ' · награды нет');
+    $w('wkTime').textContent = ''; $w('wkIn').style.display = 'none'; $w('wkOk').style.display = 'none'; $w('wkImg').innerHTML = '';
+    if (reward) toast('📝 Викторина: +🪙 ' + fmt(reward));
+  };
+  $w('wkOk').onclick = () => { if (!$w('wkIn').disabled) answer(wkNorm($w('wkIn').value) === wkNorm(qs[i].a)); };
+  $w('wkIn').onkeydown = e => { if (e.key === 'Enter') $w('wkOk').onclick(); };
+  show();
+}
+
+/* ---------- найди лоха ---------- */
+function wkLoh() {
+  const lox = SKINS.find(s => s.id === 105);
+  let lvl = wkLvl('lohLevel');
+  const showMs = () => Math.max(350, 1000 - (lvl - 1) * 25);   /* время показа лоха: с уровнем меньше, минимум 350 мс */
+  const endAt = Date.now() + 30000; let got = 0, shown = null;
+  const b = wkOpen('🤡 Найди лоха',
+    '<div id="wkField" style="position:relative;width:100%;height:300px;background:#1a1f2b;border-radius:12px;overflow:hidden;touch-action:manipulation"></div>' +
+    '<div id="wkMsg" style="font-size:12px;color:#8792a6;margin-top:8px">Нажимай на лоха, пока он на экране. Сессия 30 секунд.</div>');
+  const lvlEl = document.createElement('div'); lvlEl.style.cssText = 'font-size:13px;font-weight:800;color:#ffc93c;margin-bottom:6px';
+  b.body.insertBefore(lvlEl, b.body.firstChild);
+  const showLvl = () => { lvlEl.textContent = 'Уровень ' + lvl + ' · ' + wkBonusTxt(lvl) + ' · лох на экране ' + showMs() + ' мс'; };
+  showLvl();
+  const field = b.body.querySelector('#wkField');
+  const msg = t => { const el = b.body.querySelector('#wkMsg'); if (el) el.textContent = t; };
+  const finish = () => { if (shown) { shown.remove(); shown = null; } msg('Сессия окончена. Заработано: 🪙 ' + fmt(got)); };
+  const next = () => { if (Date.now() >= endAt) return finish(); wkT(spawn, 700 + Math.random() * 1500); };
+  const spawn = () => {
+    if (Date.now() >= endAt) return finish();
+    const el = document.createElement('img');
+    el.src = lox ? lox.src : ''; el.style.cssText = 'position:absolute;width:90px;height:90px;object-fit:cover;border-radius:12px;cursor:pointer;left:' + Math.floor(Math.random() * 230) + 'px;top:' + Math.floor(Math.random() * 200) + 'px';
+    field.appendChild(el); shown = el;
+    const timer = wkT(() => { if (shown === el) { el.remove(); shown = null; } next(); }, showMs());
+    el.onclick = () => {
+      if (shown !== el) return;
+      clearTimeout(timer); el.remove(); shown = null;
+      const r = Math.max(1, Math.floor(getPerClick() * 10 * wkBonus(lvl)));
+      got += r; addMoney(r, 'click'); lvl++; wkState.lohLevel = lvl; wkSave(); showLvl();
+      msg('Попал! +🪙 ' + fmt(r) + ' · уровень ' + lvl);
+      next();
+    };
+  };
+  spawn();
+}
+
+/* ---------- раздел «Работы» ---------- */
+function wkStart(id) {
+  if (id === 'killer') return wkKiller();
+  if (id === 'trucker') return wkTrucker();
+  if (id === 'quiz') return wkQuiz();
+  if (id === 'loh') return wkLoh();
+}
+function renderWorks() {
+  const box = document.getElementById('worksBox'); if (!box) return;
+  const cards = WK_DEFS.map(w => {
+    const open = state.clicks >= w.need, done = w.id === 'quiz' && wkState.quizDone;
+    const lk = { killer: 'killerLevel', trucker: 'truckerLevel', loh: 'lohLevel' }[w.id];
+    const lvl = lk ? ' · уровень ' + wkLvl(lk) + ' (' + wkBonusTxt(wkLvl(lk)) + ')' : '';
+    const label = !open ? '🔒 с ' + fmt(w.need) + ' кликов' : (done ? '✅ Пройдено' : 'Работать');
+    return '<div class="wk-card"><div><b>' + w.name + '</b>' + lvl + '</div><div class="wk-desc">' + w.desc + '</div>' +
+      '<button class="wk-btn" data-work="' + w.id + '"' + (!open || done ? ' disabled' : '') + '>' + label + '</button></div>';
+  }).join('');
+  box.innerHTML = cards;
+}
+(function wkInit() {
+  if (!document.getElementById('wkCss')) {
+    const st = document.createElement('style'); st.id = 'wkCss';
+    st.textContent = '#worksBox{margin-bottom:6px}' +
+      '.wk-card{background:linear-gradient(180deg,#1b2231,#151b27);border:1px solid #28303f;border-radius:16px;padding:12px;margin-bottom:10px;text-align:left}' +
+      '.wk-desc{font-size:12px;color:#8792a6;margin:4px 0 8px;line-height:1.4}' +
+      '.wk-btn{width:100%;padding:10px;border:none;border-radius:12px;background:linear-gradient(180deg,#ffd85e,#ff9f1c);color:#2a1c00;font-weight:900;cursor:pointer}' +
+      '.wk-btn:disabled{background:#242d3d;color:#8792a6;cursor:default}';
+    document.head.appendChild(st);
+  }
+  const box = document.getElementById('worksBox');
+  if (box) box.addEventListener('click', e => { const btn = e.target.closest('[data-work]'); if (btn && !btn.disabled) wkStart(btn.dataset.work); });
+  renderWorks();
+})();
 
 /* ---------- СКАЧАТЬ / ЗАГРУЗИТЬ / СБРОС ---------- */
 document.getElementById('downloadSaveBtn').addEventListener('click', () => {
