@@ -99,6 +99,8 @@ node tools/release.js --linux --version 1.0.7    # соберёт VitalyaClicker
 выложенные — чтобы игрок другой платформы не получил ссылку на несуществующий файл.
 Игра на Linux получает обновление так же, как на Android: открывается загрузка
 AppImage, после скачивания нужен `chmod +x VitalyaClicker.AppImage`.
+Догрузить AppImage в уже выпущенный релиз (не удаляя EXE/APK) можно с той же версией:
+`node tools/release.js --linux --upload-only --version 1.1.0`.
 
 Из игры то же самое доступно владельцу: «Онлайн» → «Админ» → **🚀 Выпуск обновления**.
 Там же выбирается, где собирать — на машине сервера или в облаке GitHub Actions (`.github/workflows/release.yml`).

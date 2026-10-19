@@ -158,13 +158,16 @@ function bump(v) {
     if (BUILD_EXE) wanted.push('win');
     if (BUILD_APK) wanted.push('android');
     if (BUILD_LINUX) wanted.push('linux');
+    /* AppImage часто догружают в уже выпущенный релиз (--upload-only уже той же
+       версии): файлы других платформ лежат в том же релизе, поэтому не выкидываем их */
+    const keepAssets = (UPLOAD_ONLY && String(cur.version) === version && cur.assets && typeof cur.assets === 'object') ? cur.assets : {};
     const versionPayload = {
       version: version,
       released: new Date().toISOString(),
       notes: notes,
       /* перечисляем только то, что реально лежит в этом релизе: иначе игрок
          другой платформы получит ссылку на несуществующий файл */
-      assets: wanted.reduce((o, k) => (o[k] = PACKED[k], o), {})
+      assets: Object.assign({}, keepAssets, wanted.reduce((o, k) => (o[k] = PACKED[k], o), {}))
     };
     writeJson(vFile, versionPayload);
     for (const p of [path.join(BUILD, 'electron', 'package.json'), path.join(BUILD, 'mobile', 'package.json')]) {
@@ -217,25 +220,35 @@ function bump(v) {
     /* 5) публикация в GitHub Releases */
     say('Публикация в GitHub Releases');
     const old = await gh('GET', '/repos/' + REPO + '/releases/tags/' + tag).catch(() => null);
-    if (old) {
-      await gh('DELETE', '/repos/' + REPO + '/releases/' + old.id).catch(() => {});
-      await gh('DELETE', '/repos/' + REPO + '/git/refs/tags/' + tag).catch(() => {});
-      info('прежний релиз ' + tag + ' удалён');
-    }
-    const rel = await gh('POST', '/repos/' + REPO + '/releases', {
-      json: {
-        tag_name: tag,
-        name: 'VitalyaClicker ' + tag,
-        body: notes + '\n\n' + wanted.map(k => '- ' + PACKED[k] + ' (' + k + ')').join('\n') + '\n\nОбновление можно поставить прямо из игры.',
-        draft: false,
-        prerelease: false
+    let rel = null;
+    if (old && UPLOAD_ONLY) {
+      /* дополняем готовый релиз (например, догружаем AppImage к EXE и APK) —
+         удалять его нельзя: вместе с ним пропали бы файлы других платформ */
+      rel = old;
+      info('релиз ' + tag + ' уже существует — добавляю файлы в него, ничего не удаляя');
+    } else {
+      if (old) {
+        await gh('DELETE', '/repos/' + REPO + '/releases/' + old.id).catch(() => {});
+        await gh('DELETE', '/repos/' + REPO + '/git/refs/tags/' + tag).catch(() => {});
+        info('прежний релиз ' + tag + ' удалён');
       }
-    });
-    info('релиз создан: ' + rel.html_url);
+      rel = await gh('POST', '/repos/' + REPO + '/releases', {
+        json: {
+          tag_name: tag,
+          name: 'VitalyaClicker ' + tag,
+          body: notes + '\n\n' + Object.keys(versionPayload.assets).map(k => '- ' + PACKED[k] + ' (' + k + ')').join('\n') + '\n\nОбновление можно поставить прямо из игры.',
+          draft: false,
+          prerelease: false
+        }
+      });
+      info('релиз создан: ' + rel.html_url);
+    }
 
+    const have = new Set(((old && old.assets) || []).map(a => a.name));
     const assets = [];
     for (const k of wanted) { const f = path.join(DIST, PACKED[k]); if (fs.existsSync(f)) assets.push([f, PACKED[k]]); }
     for (const [file, name] of assets) {
+      if (have.has(name)) { info('уже в релизе: ' + name); continue; }
       const size = fs.statSync(file).size;
       say('Загрузка ' + name + ' (' + (size / 1048576).toFixed(1) + ' МБ)');
       await gh('POST', '/repos/' + REPO + '/releases/' + rel.id + '/assets?name=' + encodeURIComponent(name), {

@@ -1817,7 +1817,7 @@ function renderAdmin() {
       <div class="ol-row nowrap" style="margin-top:0"><input class="ol-in" id="admNew" placeholder="Ник нового админа" maxlength="16" autocomplete="off"><button class="ol-btn" data-act="adm-add">➕ Назначить</button></div>
       <div class="ol-list">${adm.users.filter(u => u.admin && !u.owner).map(u => `<div class="ol-item"><span class="grow"><span class="ol-pres${u.online ? ' on' : ''}"></span><b>${esc(u.name)}</b>${roleTag(u)}</span><span class="acts">${btn('adm-demote', u.name, 'Снять', 'red')}</span></div>`).join('') || '<div class="ol-empty">Других админов пока нет</div>'}</div></div>` : ''}
     ${me.owner ? `<div class="ol-box ol-owner"><h3>🚀 Выпуск обновления</h3>
-      <div class="ol-sub-note">Игра заблокируется для всех игроков, соберутся EXE и APK и попадут в GitHub Releases. Занимает 5–15 минут.</div>
+      <div class="ol-sub-note">Игра заблокируется для всех игроков, пока идёт сборка; готовые файлы попадут в GitHub Releases. Занимает 5–15 минут. Собираются файлы этой системы: на Windows — EXE и APK, на Linux — AppImage.</div>
       <div class="ol-row nowrap" style="margin-top:0"><input class="ol-in" id="relVer" placeholder="версия, напр. 1.0.7 (пусто — авто)" maxlength="16" autocomplete="off"><button class="ol-btn" data-act="adm-release">🚀 Выпустить</button></div>
       <input class="ol-in" id="relNotes" placeholder="Что нового (увидят игроки)" maxlength="300" autocomplete="off" style="width:100%;margin-top:6px">
       <select class="ol-in" id="relMode" autocomplete="off" style="width:100%;margin-top:6px">
@@ -2030,7 +2030,7 @@ async function onClick(e) {
       const mode = ($('relMode') ? $('relMode').value : 'auto');
       const where = mode === 'cloud' ? '\n\nСборка пойдёт в облаке GitHub (нужен доступ к репозиторию).'
         : (mode === 'local' ? '\n\nСборка пойдёт на этом компьютере.' : '');
-      if (!(await askConfirm('🚀 Выпустить обновление' + (v ? ' v' + v : '') + '?', 'Все игроки будут заблокированы, пока не соберутся EXE, APK и Linux-сборка, затем файлы попадут в GitHub Releases.' + where, { okText: 'Выпустить' }))) return;
+      if (!(await askConfirm('🚀 Выпустить обновление' + (v ? ' v' + v : '') + '?', 'Все игроки будут заблокированы, пока не соберутся файлы обновления, затем они попадут в GitHub Releases.' + where, { okText: 'Выпустить' }))) return;
       return req('admin.release', { version: v, notes, mode }).then(r => {
         T('🚀 Сборка запущена' + (r.version ? ': v' + r.version : '') + (r.mode === 'cloud' ? ' в облаке GitHub' : ' на этом компьютере'));
         return refreshAdmin().catch(() => {});
