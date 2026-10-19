@@ -1113,6 +1113,10 @@ async function arcPlay(gameId, choice) {
 /* ============================================================
    РУЛЕТКА: колесо на canvas + шарик (общее для аркады и дуэлей)
    ============================================================ */
+/* звуки рулетки — те же мелодии, что в казино кликера (audio/*.ogg) */
+function sfx(name) { try { if (typeof sfxPlay === 'function') sfxPlay(name); } catch (e) {} }
+function casinoSfxStart() { try { if (typeof sfxStopAll === 'function') sfxStopAll(); if (typeof startCasinoSound === 'function') startCasinoSound(); } catch (e) {} }
+function casinoSfxStop() { try { if (typeof stopCasinoSound === 'function') stopCasinoSound(); } catch (e) {} }
 let rouBmp = null, rouBmpSize = 0;
 /* статичная картинка колеса: обод, лунки, числа, ступица (без указателя и шарика) */
 function wheelBitmap(size) {
@@ -1336,6 +1340,7 @@ async function rouSpin() {
   if (totalMoney() < stake) return T('❌ Не хватает денег (нужно 🪙 ' + F(stake) + ')');
   const cv = $('rouCv'); if (!cv) return;
   arcade.busy = true;
+  casinoSfxStart();
   const n = Math.floor(Math.random() * 37);
   const r = R.evaluate(bets, n);
   spendMoney(stake);
@@ -1349,6 +1354,8 @@ async function rouSpin() {
   const rot = await spinWheelTo(cv, n, { from: Number(arcade.angle) || 0, dur: 4200 });
   arcade.angle = rot % 360;
   arcade.busy = false;
+  casinoSfxStop();
+  if (r.net > 0) sfx('mel-win'); else if (r.net < 0) sfx('mel-vosm');
   try { updateBalance(); updateAffordability(); } catch (e) {}
   updateHead();
   renderArcade();
@@ -1418,10 +1425,13 @@ function duelSpin(room) {
   if (duel.spinKey === key) { drawWheelRest(cv, room.num, 300); const o = $('duelOut'); if (o) o.style.display = ''; return; }
   duel.spinKey = key;
   const info = $('duelWheel'), out = $('duelOut');
+  casinoSfxStart();
   spinWheelTo(cv, room.num, { from: Number(duel.angle) || 0, dur: 4200, max: 300 }).then(() => {
     if (info) info.textContent = 'Выпало ' + rouFace(room.num);
     if (out) out.style.display = '';
     const you = room.you || {};
+    casinoSfxStop();
+    if (!room.push) { if (you.win) sfx('mel-win'); else sfx('mel-vosm'); }
     T(room.push ? '🤝 Рулетка: ничья, ставки возвращены'
       : you.win ? '🏆 Рулетка: банк ваш, +🪙 ' + F(Math.max(0, (you.payout || 0) - room.bet))
         : '😵 Рулетка: −🪙 ' + F(room.bet));

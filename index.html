@@ -698,10 +698,46 @@ bgMusic.preload = 'auto'; bgMusic.loop = true; bgMusic.volume = 0.5;
 const casinoAudio = new Audio('audio/casinokrut.ogg');
 casinoAudio.preload = 'auto'; casinoAudio.loop = true; casinoAudio.volume = 0.75;
 function playSafe(a) { if (!a || !soundEnabled) return; try { const p = a.play(); if (p && p.catch) p.catch(()=>{}); } catch(e){} }
-function stopAllMusic() { [bgMusic, casinoAudio].forEach(a => { try { a.pause(); } catch(e){} }); }
+function stopAllMusic() { [bgMusic, casinoAudio].forEach(a => { try { a.pause(); } catch(e){} }); sfxActive.forEach(a => { try { a.pause(); } catch(e){} }); sfxActive.clear(); }
 function playCurrentBG() { if (!soundEnabled || spinning) return; if (bgMusic.paused) playSafe(bgMusic); }
 function startCasinoSound() { if (!soundEnabled) return; try { bgMusic.pause(); } catch(e){} try { casinoAudio.pause(); casinoAudio.currentTime = 0; casinoAudio.load(); } catch(e){} playSafe(casinoAudio); }
 function stopCasinoSound() { try { casinoAudio.pause(); casinoAudio.currentTime = 0; } catch(e){} }
+
+/* ---------- КОРОТКИЕ ЗВУКИ (audio/<имя>.ogg) ----------
+   Пока мелодия играет, фоновая музыка ставится на паузу и продолжается после неё.
+   duck:false — фон не глушить, single:true — не запускать такой же звук повторно. */
+const sfxActive = new Set();
+function sfxPlay(name, opts) {
+  opts = opts || {};
+  if (!soundEnabled) return;
+  const duck = opts.duck !== false;
+  if (opts.single) { for (const x of sfxActive) if (x._n === name) return; }
+  const a = new Audio('audio/' + name + '.ogg'); a._n = name; a.volume = opts.volume == null ? 0.9 : opts.volume;
+  let done = false, fb = null;
+  const end = () => {
+    if (done) return; done = true; clearTimeout(fb);
+    if (duck) { sfxActive.delete(a); if (!sfxActive.size) playCurrentBG(); }
+  };
+  if (duck) { sfxActive.add(a); try { bgMusic.pause(); } catch(e){} }
+  a._end = end;
+  a.addEventListener('ended', end); a.addEventListener('error', end);
+  fb = setTimeout(end, 60000);
+  try { const p = a.play(); if (p && p.catch) p.catch(end); } catch(e) { end(); }
+}
+/* оборвать все играющие мелодии (например, перед новым вращением) */
+function sfxStopAll() {
+  sfxActive.forEach(a => { try { a.pause(); } catch(e){} if (a._end) a._end(); });
+  sfxActive.clear();
+}
+/* редкое напоминание «телифон кусается» — раз в 1–4 минуты, не во время вращения */
+function phoneSchedule() {
+  setTimeout(function fire() {
+    if (spinning) { setTimeout(fire, 10000); return; }
+    toast('📱 телифон кусается');
+    sfxPlay('mel-a', { single: true });
+    phoneSchedule();
+  }, 60000 + Math.random() * 180000);
+}
 
 const soundBtn = document.getElementById('soundBtn');
 const soundModal = document.getElementById('soundModal');
@@ -1259,7 +1295,7 @@ function showBlockedOnLoad() {
 /* ---------- УТИЛИТЫ ---------- */
 function fmt(n) { n = Math.floor(n); if (!isFinite(n) || n <= 0) return '0'; if (n < 1000) return String(n); const units = ['K','M','B','T','Qa','Qi','Sx','Sp','Oc','No','Dc']; let i = -1; while (n >= 1000 && i < units.length - 1) { n /= 1000; i++; } return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : n.toFixed(0)) + units[i]; }
 function brokenImg() { const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="100%" height="100%" fill="#2a3140"/><text x="50%" y="46%" font-size="90" text-anchor="middle" dominant-baseline="central">🖼️</text><text x="50%" y="78%" font-size="18" fill="#8792a6" text-anchor="middle" font-family="Arial">нет файла</text></svg>`; return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); }
-function toast(msg) { const box = document.getElementById('toasts'); if (!box) return; const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; box.appendChild(t); setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 320); }, 1800); }
+function toast(msg) { if (/не хватает|недостаточно/i.test(String(msg))) sfxPlay('mel-many', { single: true }); const box = document.getElementById('toasts'); if (!box) return; const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; box.appendChild(t); setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 320); }, 1800); }
 function fmtTime(ts) { const d = new Date(ts); const p = n => String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 
 /* ============================================================
@@ -1890,7 +1926,7 @@ function spin() {
   spinning = true; setSpinUIBlocked(true);
   $result.textContent = ''; $result.className = '';
   spendMoney(bet); updateBalance();
-  startCasinoSound();
+  sfxStopAll(); startCasinoSound();   /* новое вращение обрывает прошлую мелодию */
   let finalItems;
   if (isWin) { const w = randomReelItem(); finalItems = [w,w,w]; }
   else { const p = [...REEL_ITEMS].sort(()=>Math.random()-0.5); finalItems = [p[0],p[1],p[2]]; }
@@ -1900,10 +1936,12 @@ function spin() {
     $drums.forEach((d,i) => stopDrum(d, finalItems[i]));
     if (isWin) {
       const winAmount = bet * mult; addMoney(winAmount, 'casino');
+      sfxPlay('mel-win');
       $result.className = 'win'; $result.textContent = `x${fmtMult(mult)} — ВЫИГРЫШ! +${fmt(winAmount - bet)} 🪙`;
       if (mult >= MULT_MAX) { toast('💥 x50! КАЗИНО СБРОШЕНО!'); state.casino.totalSpins = 0; state.casino.multiplier = MULT_MIN; $multSlider.value = String(MULT_MIN); historyArr = []; $history.innerHTML = ''; unlockAch('x50'); }
       else state.casino.totalSpins++;
     } else {
+      sfxPlay('mel-eh');
       $result.className = 'lose'; $result.textContent = `💀 ПРОИГРЫШ −${fmt(bet)} 🪙`; state.casino.totalSpins++;
       if (totalMoney() <= 0) unlockAch('loh');
     }
@@ -2265,6 +2303,7 @@ if (_acLock) {
   applyOffline();
   if (typeof state.soundChoice === 'boolean') { soundEnabled = state.soundChoice; applySoundState(); }
   else { soundEnabled = false; soundModal.classList.add('show'); applySoundState(); }
+  phoneSchedule();   /* редкое напоминание «телифон кусается» */
   Object.keys(state.crypto).forEach(k => { if (!state.crypto[k].history.length) state.crypto[k].history.push(state.crypto[k].price); });
   ensureNewsQueue();
   updateAchToggleBtn();
