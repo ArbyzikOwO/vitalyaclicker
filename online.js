@@ -60,7 +60,7 @@ let cards = { games: [], rooms: [], room: null, game: null, sel: 'bj', pick: [],
 let duel = { tables: [], myTable: null, res: null, busy: false, spinKey: '', rooms: [], room: null, bets: {}, stack: [], pct: 0.25, angle: 0, timer: null };
 let prof = null, top = null, bank = null;
 let arcade = { busy: false, last: null, pick: '', view: 'list', chip: 1000, bets: {}, stack: [], num: null, angle: 0 };
-let adm = { users: [], stats: null, q: '', audit: null };
+let adm = { users: [], stats: null, q: '', audit: null, parrot: null };
 let players = { list: [], q: '', total: 0, online: 0 };
 let walletBusy = false, walletAgain = false;
 const ONLY_GLOBAL = [{ id: 'global', ico: '🌍', name: 'Общий чат' }];
@@ -1656,6 +1656,7 @@ async function refreshAdmin() {
   if (!authed || !me || !me.admin) return;
   try { const r = await req('admin.users', { q: adm.q }); adm.users = r.users; adm.stats = { total: r.total, online: r.online, tables: r.tables, games: r.games }; } catch (e) { T('❌ ' + e.message); }
   if (me.owner) { try { adm.rel = await req('admin.releasestatus'); } catch (e) {} }
+  try { adm.parrot = await req('admin.parrot'); } catch (e) {}
   renderAdmin();
 }
 /* где сервер может собрать обновление (данные admin.releasestatus) */
@@ -1678,6 +1679,41 @@ function relModeHint() {
   if (!r) return '';
   return r.auto === 'local' ? ' (этот компьютер)' : (r.auto === 'cloud' ? ' (облако GitHub)' : '');
 }
+function parrotBoxHtml() {
+  const p = adm.parrot;
+  if (!p || typeof p !== 'object') return '';
+  const c = p.cfg || {}, st = p.status || {};
+  const info = st.loaded ? `модель ${esc(st.file)} · токенов ${st.tokens} · словарь ${st.vocab}` : '⚠️ ' + esc(st.error || 'модель не найдена');
+  return `<div class="ol-box"><h3>🦜 ParrotAI в общем чате</h3>
+    <div class="ol-sub-note">Попугай отвечает в общем чате, когда его спрашивают. Модель лежит в server/models/Parrot-ai.bin: обучить и выгрузить её можно страницей tools/parrot-trainer.html, затем положить файл на сервер и нажать «Перезагрузить модель».</div>
+    <div class="ol-row nowrap" style="margin-top:0"><button class="ol-btn${p.on ? '' : ' sec'}" data-act="adm-parrot-toggle">${p.on ? '🟢 Включён' : '⚪ Выключен'}</button><span class="ol-dim">${info}</span></div>
+    <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="parName" placeholder="Имя бота" maxlength="24" value="${esc(c.botName || '')}">
+      <input class="ol-in" id="parTrig" placeholder="Вызов, напр. q:" maxlength="10" value="${esc(c.trigger || '')}"></div>
+    <div class="ol-row nowrap" style="margin-top:6px"><input class="ol-in" id="parDelay" placeholder="Задержка, сек" value="${c.delaySec == null ? 1 : c.delaySec}">
+      <input class="ol-in" id="parTokens" placeholder="Макс. токенов" value="${c.maxTokens == null ? 400 : c.maxTokens}">
+      <input class="ol-in" id="parCtx" placeholder="Контекст" value="${c.contextSize == null ? 8 : c.contextSize}"></div>
+    <div class="ol-row" style="margin-top:6px"><label class="ol-dim"><input type="checkbox" id="parAsk"${c.askQuestion ? ' checked' : ''}> отвечать на вопросы</label>
+      <label class="ol-dim"><input type="checkbox" id="parAll"${c.answerAll ? ' checked' : ''}> отвечать на всё</label></div>
+    <div class="ol-row nowrap" style="margin-top:6px"><button class="ol-btn" data-act="adm-parrot-save">💾 Сохранить</button><button class="ol-btn sec" data-act="adm-parrot-reload">🔄 Перезагрузить модель</button></div>
+  </div>`;
+}
+async function parrotSave(reload) {
+  const m = { cfg: {
+    botName: ($('parName') || {}).value || 'ParrotAI',
+    trigger: ($('parTrig') || {}).value || '',
+    delaySec: ($('parDelay') || {}).value,
+    maxTokens: ($('parTokens') || {}).value,
+    contextSize: ($('parCtx') || {}).value,
+    askQuestion: !!($('parAsk') || {}).checked,
+    answerAll: !!($('parAll') || {}).checked
+  } };
+  if (reload) m.reload = true;
+  try {
+    adm.parrot = await req('admin.parrot', m);
+    renderAdmin();
+    T(reload ? '🦜 Модель перезагружена' : '🦜 Настройки сохранены');
+  } catch (e) { T('❌ ' + e.message); }
+}
 function renderAdmin() {
   const d = $('olSub-admin'); if (!d || !me || !me.admin) return;
   const s = adm.stats || { total: 0, online: 0, tables: 0, games: 0 };
@@ -1686,6 +1722,7 @@ function renderAdmin() {
     <div class="ol-adm-stats"><div><b>${s.total}</b><i>игроков</i></div><div><b>${s.online}</b><i>онлайн</i></div><div><b>${s.tables}</b><i>столов</i></div><div><b>${s.games}</b><i>игр</i></div></div>
     <div class="ol-row nowrap"><input class="ol-in" id="admBc" placeholder="Объявление всем игрокам" maxlength="200"><button class="ol-btn" data-act="adm-bc">📢</button></div>
     <div class="ol-row nowrap"><input class="ol-in" id="admQ" placeholder="Поиск игрока" value="${esc(adm.q)}"><button class="ol-btn sec" data-act="adm-refresh">🔄</button><button class="ol-btn sec" data-act="adm-audit">📜</button></div></div>
+    ${parrotBoxHtml()}
     ${adm.audit ? '<div class="ol-box"><h3>📜 Журнал действий</h3><div class="ol-list">' + (adm.audit.length ? adm.audit.map(a => `<div class="ol-item"><span class="grow"><span class="ol-dim">${hhmm(a.at)}</span> <b>${esc(a.admin)}</b> ${esc(a.action)} <span class="ol-dim">${esc(a.detail)}</span></span></div>`).join('') : '<div class="ol-empty">Пусто</div>') + '</div></div>' : ''}
     ${me.owner ? `<div class="ol-box ol-owner"><h3>👑 Администраторы</h3>
       <div class="ol-sub-note">Админку выдаёт только владелец. Админы не могут назначать других админов и не могут трогать владельца.</div>
@@ -1860,6 +1897,9 @@ function onClick(e) {
     case 'adm-refresh': adm.q = ($('admQ').value || '').trim(); return refreshAdmin();
     case 'adm-audit': return req('admin.audit').then(r => { adm.audit = adm.audit ? null : r.log; renderAdmin(); }).catch(x => T('❌ ' + x.message));
     case 'adm-add': { const n = ($('admNew').value || '').trim(); if (!n) return; return req('admin.add', { name: n }).then(() => { T('🛡️ ' + n + ' теперь админ'); refreshAdmin(); }).catch(x => T('❌ ' + x.message)); }
+    case 'adm-parrot-toggle': return req('admin.parrot', { on: !(adm.parrot && adm.parrot.on) }).then(r => { adm.parrot = r; renderAdmin(); T(r.on ? '🦜 ParrotAI включён' : '🦜 ParrotAI выключен'); }).catch(x => T('❌ ' + x.message));
+    case 'adm-parrot-save': return parrotSave(false);
+    case 'adm-parrot-reload': return parrotSave(true);
     case 'adm-bc': { const t = ($('admBc').value || '').trim(); if (!t) return; return req('admin.broadcast', { text: t }).then(() => { $('admBc').value = ''; T('📢 Отправлено'); }).catch(x => T('❌ ' + x.message)); }
     case 'adm-release': {
       const v = ($('relVer').value || '').trim().replace(/^v/i, '');

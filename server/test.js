@@ -206,6 +206,28 @@ function authTry(token, version) {
   ok((await post('/api/login', { name: 'Carol', password: 'secret3' })).ok, 'после разбана вход работает');
   ok(!(await A.req('admin.ban', { name: 'Alice' })).ok, 'нельзя применить бан к себе');
 
+  console.log('— ParrotAI (попугай в общем чате)');
+  r = await B.req('admin.parrot'); ok(!r.ok, 'настройки ParrotAI доступны только админам');
+  r = await A.req('admin.parrot'); ok(r.ok && r.status && r.status.loaded, 'модель ParrotAI загружена сервером');
+  ok(typeof r.cfg.botName === 'string' && r.cfg.botName.length > 0, 'настройки бота отдаются клиенту');
+  r = await A.req('admin.parrot', { on: true, cfg: { botName: 'ПопугайТест', trigger: 'попугай', delaySec: 0, askQuestion: true, answerAll: false } });
+  ok(r.ok && r.on && r.cfg.botName === 'ПопугайТест' && r.cfg.delaySec === 0, 'включение бота и сохранение настроек');
+  await A.req('chat.send', { text: 'попугай привет' });
+  await sleep(1200);
+  const hist = (await A.req('chat.history', {})).msgs;
+  const botCount = hist.filter(m => m.bot).length;
+  ok(botCount >= 1 && hist.filter(m => m.bot).pop().from === 'ПопугайТест', 'бот ответил в общем чате на обращение по имени');
+  await A.req('chat.send', { text: 'обычная фраза без вопроса' });
+  await sleep(1200);
+  ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === botCount, 'на обычную фразу бот не отвечает');
+  r = await A.req('admin.parrot', { on: false });
+  ok(r.ok && !r.on, 'бот выключается');
+  await A.req('chat.send', { text: 'попугай ты тут?' });
+  await sleep(1200);
+  ok((await A.req('chat.history', {})).msgs.filter(m => m.bot).length === botCount, 'выключенный бот молчит');
+  r = await A.req('admin.parrot', { cfg: { botName: 'ParrotAI', trigger: 'q:', delaySec: 1 } });
+  ok(r.ok && r.cfg.botName === 'ParrotAI' && r.cfg.trigger === 'q:', 'настройки бота возвращены');
+
   console.log('— Выпуск обновления');
   /* Важно: Carol (C) выше была забанена и кикнута — её соединение закрыто, поэтому здесь B. */
   r = await B.req('admin.release', { version: '1.0.1' }); ok(!r.ok && /Только владелец/.test(r.err), 'выпускать обновление может только владелец');

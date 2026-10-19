@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат с Parrot AI</title>
+<style>
+  :root {
+    --bg: #0f0f12; --panel: #18181d; --panel2: #202027; --border: #2a2a33;
+    --text: #e8e8ea; --muted: #8a8a95; --accent: #6c8cff; --user: #2a2a38; --ai: #1a1a22;
+    --danger: #ff6c6c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+  body { display: flex; height: 100dvh; }
+  .sidebar { width: 340px; max-width: 88vw; background: var(--panel); border-right: 1px solid var(--border); padding: 16px 16px 32px; overflow-y: auto; position: fixed; top: 0; bottom: 0; left: 0; transform: translateX(-100%); transition: transform .22s; z-index: 20; }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: .6px; margin: 18px 0 8px; }
+  .sidebar h2:first-of-type { margin-top: 8px; }
+  .sidebar .close-btn { position: absolute; top: 12px; right: 12px; background: transparent; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  .sidebar .close-btn:hover { color: var(--text); }
+  .sidebar .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; font-size: 13.5px; }
+  .sidebar .row.full { padding: 2px 0; }
+  .sidebar .row.disabled { opacity: .38; }
+  .sidebar input[type="text"], .sidebar input[type="number"], .sidebar select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 13px; width: 130px; outline: none; font-family: inherit; }
+  .sidebar input[type="number"].small { width: 100px; }
+  .sidebar input[type="text"].wide { width: 100%; }
+  .sidebar input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .sidebar input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  .sidebar input:disabled, .sidebar select:disabled { cursor: not-allowed; }
+  .sidebar .hint { color: var(--muted); font-size: 11.5px; padding: 2px 0 6px; line-height: 1.4; }
+  .sidebar .btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .sidebar button.action { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; flex: 1; min-width: 90px; }
+  .sidebar button.action:hover { background: #2a2a33; }
+  .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100dvh; }
+  .header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+  .header .title { flex: 1; font-size: 15px; font-weight: 600; text-align: center; letter-spacing: .2px; }
+  .icon-btn { background: transparent; border: 1px solid transparent; color: var(--text); width: 36px; height: 36px; border-radius: 8px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; flex-shrink: 0; }
+  .icon-btn:hover { background: var(--panel2); }
+  .icon-btn.active { background: var(--accent); color: #fff; }
+  .icon-btn:disabled { opacity: .35; cursor: not-allowed; }
+  .icon-btn.debug { color: var(--muted); }
+  .icon-btn.debug:hover { color: var(--danger); }
+  .messages-wrap { flex: 1 1 auto; min-height: 0; position: relative; display: flex; flex-direction: column; }
+  .load-progress { display: none; position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--border); padding: 8px 16px; font-size: 12.5px; color: var(--text); }
+  .load-progress.show { display: block; }
+  .load-progress .lp-row { display: flex; justify-content: space-between; margin-bottom: 5px; color: var(--muted); }
+  .load-progress .lp-bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+  .load-progress .lp-fill { height: 100%; background: var(--accent); width: 0%; transition: width .12s linear; }
+  .messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 22px 22px 8px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+  .msg { max-width: 780px; width: fit-content; padding: 10px 14px; border-radius: 14px; font-size: 15px; line-height: 1.5; word-wrap: break-word; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--user); border-bottom-right-radius: 4px; }
+  .msg.ai { align-self: flex-start; background: var(--ai); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg .actions { display: flex; gap: 2px; margin-top: 8px; opacity: 0; transition: opacity .15s; }
+  .msg:hover .actions { opacity: 1; }
+  .msg .actions button { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 3px 6px; border-radius: 5px; font-family: inherit; }
+  .msg .actions button:hover { color: var(--text); background: var(--panel2); }
+  .msg .actions button.cont { color: var(--accent); }
+  .msg .actions button.cont:hover { color: #fff; background: var(--accent); }
+  .sys-note { align-self: center; color: var(--muted); font-size: 12px; padding: 3px 12px; text-align: center; }
+  .scroll-down-btn { position: absolute; right: 22px; bottom: 18px; width: 42px; height: 42px; border-radius: 50%; background: var(--accent); color: #fff; border: none; cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 20px; z-index: 6; box-shadow: 0 4px 14px rgba(0,0,0,.5); transition: transform .12s, opacity .12s; }
+  .scroll-down-btn.show { display: flex; }
+  .scroll-down-btn:hover { transform: scale(1.06); }
+  .scroll-down-btn:active { transform: scale(0.96); }
+  .input-bar { display: flex; align-items: flex-end; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+  .input-bar textarea { flex: 1; resize: none; background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 10px; font-size: 14px; font-family: inherit; max-height: 140px; min-height: 42px; outline: none; line-height: 1.4; }
+  .input-bar textarea:focus { border-color: var(--accent); }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; z-index: 40; backdrop-filter: blur(3px); }
+  .modal-backdrop.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: 460px; max-width: 92vw; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  .modal h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+  .modal p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .modal .row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 13.5px; gap: 10px; }
+  .modal .row.full { padding: 2px 0; }
+  .modal select, .modal input[type="number"], .modal input[type="text"] { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 13px; font-family: inherit; }
+  .modal input[type="text"].wide { width: 100%; }
+  .modal input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .modal .actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+  .modal button { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit; }
+  .modal button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .modal button:disabled { opacity: .4; cursor: not-allowed; }
+  .modal button:hover:not(:disabled) { filter: brightness(1.15); }
+  .drop-zone { border: 2px dashed var(--border); border-radius: 10px; padding: 24px; text-align: center; cursor: pointer; margin: 14px 0 6px; transition: border-color .15s, background .15s; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(108,140,255,.06); }
+  .drop-zone .ico { font-size: 34px; line-height: 1; }
+  .drop-zone .lbl { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #33333d; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar" id="sidebar">
+  <button class="close-btn" id="closeSidebar" title="Закрыть">✕</button>
+  <h2>Параметры</h2>
+  <div class="row"><span>Выбрать контекст</span><input type="number" id="ctxNum" min="1" value="1" class="small"></div>
+  <div class="row full"><input type="range" id="ctxRange" min="1" max="1" value="1"></div>
+  <div class="hint" id="ctxHint">1 / 1</div>
+  <div class="row"><span>Рандом</span><select id="randomSelect"><option value="no">нет</option><option value="yes">да</option></select></div>
+  <div class="row"><span>Включить instruct</span><input type="checkbox" id="instructCheck"></div>
+  <div class="hint">При instruct запрос идёт как <b>detectUser + текст</b>, ответ начинается с detectAI. Без instruct — только текст.</div>
+  <h2>Детект</h2>
+  <div class="row"><span>Ответ ИИ</span><input type="text" id="detectAI" value="\\nA: "></div>
+  <div class="row"><span>Ответ пользователя</span><input type="text" id="detectUser" value="Q: "></div>
+  <div class="hint">Используйте <b>\n</b> для перевода строки.</div>
+  <h2>Метки конца текста</h2>
+  <div class="row full"><input type="text" id="endTagsInput" class="wide" placeholder="<s_text>, </s_text>"></div>
+  <div class="hint">Через запятую. Каждый тег при загрузке превращается в &lt;end&gt;. Плюс всегда: &lt;endNNNN&gt;, \n\n\n.</div>
+  <h2>Когда остановить</h2>
+  <div class="row"><span>По тегу &lt;end&gt;</span><input type="checkbox" id="stopEnd" checked></div>
+  <div class="row"><span>По точке (./!/?)</span><input type="checkbox" id="stopDot"></div>
+  <div class="row"><span>Ограниченное число слов</span><input type="checkbox" id="stopWordLimit"></div>
+  <div class="row"><span>Через сколько слов</span><input type="number" id="wordLimit" value="50" min="1" disabled></div>
+  <div class="row"><span>Когда не находит слово</span><input type="checkbox" id="stopNoMatch"></div>
+  <div class="row"><span>Слов осталось</span><input type="number" id="wordsRemaining" value="3" min="1" disabled></div>
+  <div class="row"><span>Генерировать бесконечно</span><input type="checkbox" id="infiniteCheck"></div>
+  <div class="row"><span>Токенов / сек</span><input type="number" id="tokenRate" value="1000" min="1" max="1000000" class="small"></div>
+  <div class="hint">Цикл: 500 мс генерация пачки (rate/2), затем 500 мс рендер и отдых.<br>Walk-forward: длина = контекст (мин 1). Рандом его отключает.<br>Скор = совпадения + число возможных $word.</div>
+  <h2>Теги</h2>
+  <div class="hint" style="padding-top:0">
+    <b>&lt;endNNNN&gt;</b> — конец текста<br>
+    <b>&lt;continueNNNN&gt;</b> — выбрать другую ветку<br>
+    <b>&lt;writeToDotNNNN&gt;</b> — вставить отрывок из другой ветки до точки<br>
+    <b>&lt;writeToEndNNNN&gt;</b> — то же, но до &lt;end&gt;/detectUser<br>
+    Регистр не важен.
+  </div>
+  <h2>Отладка</h2>
+  <div class="btns">
+    <button class="action" id="dumpLogBtn">💾 Сохранить лог</button>
+    <button class="action" id="clearLogBtn">Очистить лог</button>
+  </div>
+  <div class="hint" id="logHint">Лог: 0 событий</div>
+  <h2>Экспорт / Импорт</h2>
+  <div class="btns">
+    <button class="action" id="exportBtn">Экспорт .json</button>
+    <button class="action" id="exportBinBtn">Экспорт .bin</button>
+  </div>
+  <div class="btns"><button class="action" id="importBtn">Импорт модели</button></div>
+  <div class="hint">Импорт: только .json или .bin</div>
+  <input type="file" id="importFile" accept=".json,.bin" style="display:none">
+</aside>
+
+<div class="main">
+  <header class="header">
+    <button class="icon-btn" id="openSidebar" title="Меню">☰</button>
+    <button class="icon-btn" id="speakToggle" title="Озвучивать текст">🔊</button>
+    <div class="title">Чат с Parrot AI</div>
+    <button class="icon-btn debug" id="debugBtn" title="Сохранить лог в JSON">🐞</button>
+    <button class="icon-btn" id="clearChat" title="Очистить чат">🗑</button>
+  </header>
+  <div class="messages-wrap">
+    <div class="load-progress" id="loadProgress">
+      <div class="lp-row"><span id="lpLabel">Загрузка…</span><span id="lpPercent">0%</span></div>
+      <div class="lp-bar"><div class="lp-fill" id="lpFill"></div></div>
+    </div>
+    <div class="messages" id="messages"></div>
+    <button class="scroll-down-btn" id="scrollDownBtn" title="Вниз">↓</button>
+  </div>
+  <div class="input-bar">
+    <button class="icon-btn" id="attachBtn" title="Прикрепить файл">📎</button>
+    <textarea id="input" rows="1" placeholder="Напишите сообщение..."></textarea>
+    <button class="icon-btn" id="micBtn" title="Голосовой ввод">🎤</button>
+    <button class="icon-btn" id="sendBtn" title="Отправить">➤</button>
+  </div>
+</div>
+
+<div class="modal-backdrop open" id="welcomeModal">
+  <div class="modal">
+    <h3>Загрузка датасета</h3>
+    <p>Выберите один или несколько <b>.txt</b> файлов. Можно пропустить и загрузить позже через скрепку.</p>
+    <div class="row">
+      <span>Метки конца текста</span>
+    </div>
+    <div class="row full">
+      <input type="text" id="welcomeEndTags" class="wide" placeholder="<s_text>, </s_text>">
+    </div>
+    <div class="hint" style="color:var(--muted);font-size:11.5px;padding:0 0 6px;">
+      Через запятую. Каждый превратится в &lt;end&gt;. Например: <b>&lt;s_text&gt;, &lt;/s_text&gt;</b> или <b>&lt;|endoftext|&gt;</b>.
+    </div>
+    <div class="drop-zone" id="dropZone"><div class="ico">📁</div><div class="lbl">Нажмите, чтобы выбрать .txt файлы, или перетащите их сюда</div></div>
+    <div class="hint" id="welcomeHint" style="color:var(--muted);font-size:12px;min-height:16px;"></div>
+    <div class="actions"><button id="skipWelcome">Пропустить</button><button class="primary" id="startChat">Начать чат</button></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="regenModal">
+  <div class="modal">
+    <h3>Перегенерировать</h3>
+    <div class="row"><span>Рандом</span><select id="regenRandom"><option value="no">нет</option><option value="yes">да</option></select></div>
+    <div class="row"><span>Контекст</span><input type="number" id="regenCtxNum" min="1" value="1" class="small" style="width:80px"></div>
+    <div class="row full"><input type="range" id="regenCtx" min="1" max="1" value="1"></div>
+    <div class="hint" id="regenCtxHint" style="color:var(--muted);font-size:11.5px">1 / 1</div>
+    <div class="actions"><button id="regenCancel">Отмена</button><button class="primary" id="regenOk">ОК</button></div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".txt" multiple style="display:none">
+<input type="file" id="welcomeFileInput" accept=".txt" multiple style="display:none">
+
+<script>
+(function () {
+  'use strict';
+
+  const END = '<end>';
+  const END_MARKER = '\u0001';
+  const WILDCARD = -1;
+  const TAG_CONTINUE   = '<continue>';
+  const TAG_WRITE_DOT  = '<writeToDot>';
+  const TAG_WRITE_END  = '<writeToEnd>';
+
+  const MIN_TOKEN_RATE = 1;
+  const MAX_TOKEN_RATE = 1_000_000;
+  const TRAIN_CHUNK    = 5000;
+  const TRAIN_CHUNK_MS = 100;
+  const BURST_REST_MS  = 500;
+  const MAX_LOG_EVENTS = 200_000;
+  const PERF_EXPECTED_MS = 1000;
+  const PERF_TOLERANCE_MS = 500;
+
+  const BAD_START_PUNCT = new Set([":", ",", ";", ".", "!", "?"]);
+  const MAX_SKIP_LEADING = 4;
+
+  const PARTIAL_THRESHOLD = 0.5;
+
+  const state = {
+    messages: [], dataset: [],
+    idToToken: [END],
+    tokenToId: new Map([[END, 0]]),
+    lowerToId: new Map([[END, 0]]),
+    settings: {
+      context: 1, random: false, instruct: false,
+      detectAI: '\nA: ', detectUser: 'Q: ',
+      endTags: ['<s_text>', '</s_text>'],
+      stopEnd: true, stopDot: false, stopWordLimit: false, stopNoMatch: false,
+      infinite: false, wordLimit: 50, wordsRemaining: 3,
+      tokenRate: 1000, speakText: false
+    },
+    isGenerating: false, stopRequested: false
+  };
+
+  const $ = id => document.getElementById(id);
+  const messagesEl    = $('messages');
+  const inputEl       = $('input');
+  const sidebarEl     = $('sidebar');
+  const fileInput     = $('fileInput');
+  const importFile    = $('importFile');
+  const regenModal    = $('regenModal');
+  const welcomeModal  = $('welcomeModal');
+  const welcomeFile   = $('welcomeFileInput');
+  const sendBtn       = $('sendBtn');
+  const loadProgress  = $('loadProgress');
+  const lpLabel       = $('lpLabel');
+  const lpPercent     = $('lpPercent');
+  const lpFill        = $('lpFill');
+  const scrollDownBtn = $('scrollDownBtn');
+  const logHint       = $('logHint');
+
+  const debugLog = [];
+  let logSeq = 0;
+  function logEvent(type, payload) {
+    if (debugLog.length >= MAX_LOG_EVENTS) {
+      if (!debugLog._truncated) { debugLog._truncated = true; debugLog.push({ seq: ++logSeq, t: performance.now(), type: 'log_truncated' }); }
+      return;
+    }
+    debugLog.push({ seq: ++logSeq, t: Math.round(performance.now() * 1000) / 1000, type, ...(payload || {}) });
+    if (logHint) logHint.textContent = `Лог: ${debugLog.length} событий`;
+  }
+  function updateLogHint() { if (logHint) logHint.textContent = `Лог: ${debugLog.length} событий`; }
+  function dumpLogToFile() {
+    const data = {
+      version: 1, savedAt: new Date().toISOString(), userAgent: navigator.userAgent,
+      settings: JSON.parse(JSON.stringify(state.settings)),
+      datasetLength: state.dataset.length, idToTokenLength: state.idToToken.length,
+      posIndexKeys: posIndex.size, wordPosIndexKeys: wordPosIndex.size,
+      log: debugLog
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    a.download = `parrot-log-${ts}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function clearLog() { debugLog.length = 0; debugLog._truncated = false; logSeq = 0; updateLogHint(); }
+  $('debugBtn').onclick = dumpLogToFile;
+  $('dumpLogBtn').onclick = dumpLogToFile;
+  $('clearLogBtn').onclick = clearLog;
+
+  const displayDetect = s => (s || '').replace(/\n/g, '\\n');
+  const parseDetect   = s => (s || '').replace(/\\n/g, '\n');
+  function displayEndTags(arr) { return (arr || []).join(', '); }
+  function parseEndTags(str) { return (str || '').split(',').map(s => s.trim()).filter(Boolean); }
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+
+  function autoRateForDataset(size) {
+    if (size <= 1_000_000) return 1000;
+    const logRate = 3 - (Math.log10(size) - 6) / 3;
+    return Math.max(1, Math.round(Math.pow(10, logRate)));
+  }
+  function applyAutoRate() {
+    const r = autoRateForDataset(state.dataset.length);
+    state.settings.tokenRate = r;
+    const el = $('tokenRate'); if (el) el.value = r;
+    logEvent('auto_rate', { datasetLength: state.dataset.length, rate: r });
+  }
+
+  function isAtBottom() { return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40; }
+  function maybeScrollToBottom(force) { if (force || isAtBottom()) messagesEl.scrollTop = messagesEl.scrollHeight; updateScrollBtn(); }
+  function updateScrollBtn() {
+    if (messagesEl.scrollHeight <= messagesEl.clientHeight + 10) { scrollDownBtn.classList.remove('show'); return; }
+    scrollDownBtn.classList.toggle('show', !isAtBottom());
+  }
+  messagesEl.addEventListener('scroll', updateScrollBtn);
+  scrollDownBtn.onclick = () => { messagesEl.scrollTop = messagesEl.scrollHeight; updateScrollBtn(); };
+
+  const isLetter = c => /[a-zA-Zа-яА-ЯёЁ]/.test(c);
+  const TAG_RE = /^<(end|continue|writeToDot|writeToEnd)(\d+)>/i;
+
+  function getOrCreateId(tok) {
+    let id = state.tokenToId.get(tok);
+    if (id === undefined) {
+      id = state.idToToken.length;
+      state.idToToken.push(tok); state.tokenToId.set(tok, id);
+      const low = tok.toLowerCase();
+      if (!state.lowerToId.has(low)) state.lowerToId.set(low, id);
+    }
+    return id;
+  }
+
+  function matchEndTagAt(t, i) {
+    const tags = state.settings.endTags || [];
+    if (!tags.length) return 0;
+    for (let k = 0; k < tags.length; k++) {
+      const tag = tags[k];
+      if (!tag) continue;
+      if (i + tag.length > t.length) continue;
+      const sub = t.substr(i, tag.length);
+      if (sub.toLowerCase() === tag.toLowerCase()) return tag.length;
+    }
+    return 0;
+  }
+
+  function textToIds(text, create) {
+    let t = (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    t = t.replace(/\n{3,}/g, END_MARKER);
+    const ids = [], toks = [];
+    const resolveWord = (w) => {
+      if (create) return getOrCreateId(w);
+      const id = state.lowerToId.get(w.toLowerCase());
+      return id === undefined ? WILDCARD : id;
+    };
+    const resolvePunct = (c) => {
+      if (create) return getOrCreateId(c);
+      const id = state.tokenToId.get(c);
+      return id === undefined ? WILDCARD : id;
+    };
+    const resolveTag = (canonical) => {
+      if (create) return getOrCreateId(canonical);
+      const id = state.tokenToId.get(canonical);
+      return id === undefined ? WILDCARD : id;
+    };
+    let i = 0, wordBuf = '';
+    const flushWord = () => { if (wordBuf) { ids.push(resolveWord(wordBuf)); toks.push(wordBuf); wordBuf = ''; } };
+    while (i < t.length) {
+      const ch = t[i];
+      if (ch === '<') {
+        const tagLen = matchEndTagAt(t, i);
+        if (tagLen > 0) {
+          flushWord();
+          ids.push(0); toks.push('<end>');
+          i += tagLen;
+          continue;
+        }
+        const m = t.slice(i).match(TAG_RE);
+        if (m) {
+          flushWord();
+          const name = m[1].toLowerCase();
+          if (name === 'end') { ids.push(0); toks.push('<end>'); }
+          else {
+            const canonName = name === 'writetodot' ? 'writeToDot'
+                            : name === 'writetoend' ? 'writeToEnd'
+                            : name;
+            const canonical = '<' + canonName + '>';
+            ids.push(resolveTag(canonical)); toks.push(canonical);
+          }
+          i += m[0].length; continue;
+        }
+      }
+      if (ch === END_MARKER) { flushWord(); ids.push(0); toks.push('<end>'); i++; continue; }
+      if (isLetter(ch)) { wordBuf += ch; i++; continue; }
+      flushWord();
+      if (ch === ' ' || ch === '\t') { i++; continue; }
+      ids.push(resolvePunct(ch)); toks.push(ch); i++;
+    }
+    flushWord();
+    return { ids, toks };
+  }
+
+  let posIndex = new Map();
+  let wordPosIndex = new Map();
+
+  function isWordToken(id) {
+    if (id === undefined || id === 0) return false;
+    const t = state.idToToken[id];
+    return !!(t && t !== END && isLetter(t[0]));
+  }
+
+  function buildIndices() {
+    posIndex = new Map(); wordPosIndex = new Map();
+    const ds = state.dataset;
+    for (let i = 0; i < ds.length; i++) {
+      const id = ds[i];
+      let a = posIndex.get(id); if (!a) { a = []; posIndex.set(id, a); } a.push(i);
+      if (isWordToken(id)) { let w = wordPosIndex.get(id); if (!w) { w = []; wordPosIndex.set(id, w); } w.push(i); }
+    }
+    logEvent('build_indices', { datasetLength: ds.length, uniqueIds: posIndex.size, wordIds: wordPosIndex.size });
+  }
+
+  function showProgress(label, percent) {
+    loadProgress.classList.add('show');
+    lpLabel.textContent = label; lpPercent.textContent = Math.round(percent) + '%';
+    lpFill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+  }
+  function hideProgress() { loadProgress.classList.remove('show'); }
+
+  async function tokenizeToDatasetPaced(text, labelPrefix, fileIndex, fileCount) {
+    const { ids } = textToIds(text, true);
+    const total = ids.length; if (total === 0) return;
+    let processed = 0;
+    while (processed < total) {
+      const end = Math.min(processed + TRAIN_CHUNK, total);
+      for (let i = processed; i < end; i++) if (ids[i] !== WILDCARD) state.dataset.push(ids[i]);
+      processed = end;
+      const overallPct = ((fileIndex + processed / total) / fileCount) * 100;
+      showProgress(`${labelPrefix} ${processed.toLocaleString()} / ${total.toLocaleString()}`, overallPct);
+      await nextFrame();
+      await sleep(TRAIN_CHUNK_MS);
+    }
+  }
+
+  async function loadFiles(files) {
+    if (!files.length) return;
+    logEvent('load_files_start', {
+      fileCount: files.length,
+      fileNames: files.map(f => f.name),
+      endTags: state.settings.endTags.slice()
+    });
+    showProgress('Загрузка…', 0);
+    const before = state.dataset.length;
+    for (let fi = 0; fi < files.length; fi++) {
+      const f = files[fi];
+      const text = await f.text();
+      await tokenizeToDatasetPaced(text, `Файл ${fi + 1}/${files.length}:`, fi, files.length);
+      state.dataset.push(0);
+    }
+    showProgress('Построение индекса…', 99);
+    await nextFrame();
+    buildIndices();
+    applyAutoRate();
+    _detectAIToksCacheKey = null;
+    const max = Math.max(1, state.dataset.length);
+    $('ctxRange').max = max; $('ctxNum').max = max;
+    $('regenCtx').max = max; $('regenCtxNum').max = max;
+    $('ctxRange').value = max; $('ctxNum').value = max;
+    state.settings.context = max;
+    $('regenCtx').value = max; $('regenCtxNum').value = max;
+    updateCtxHints();
+    const added = state.dataset.length - before;
+    hideProgress();
+    logEvent('load_files_done', {
+      added, total: state.dataset.length, rate: state.settings.tokenRate,
+      contextSet: state.settings.context, endTags: state.settings.endTags.slice()
+    });
+    addSystemMessage(`Загружено файлов: ${files.length}. Добавлено токенов: ${added.toLocaleString()}. Всего: ${state.dataset.length.toLocaleString()}. Контекст: ${max.toLocaleString()}. Скорость: ${state.settings.tokenRate.toLocaleString()} ток/с.`);
+  }
+
+  function refreshContextLimits() {
+    const max = Math.max(1, state.dataset.length);
+    const r = $('ctxRange'), n = $('ctxNum');
+    const rr = $('regenCtx'), rn = $('regenCtxNum');
+    r.min = 1; r.max = max; rr.min = 1; rr.max = max;
+    if (+r.value > max) r.value = max;
+    n.value = r.value;
+    state.settings.context = +r.value;
+    rr.value = Math.min(+rr.value || +r.value, max); rn.value = rr.value;
+    updateCtxHints();
+  }
+  function updateCtxHints() {
+    $('ctxHint').textContent = `${$('ctxRange').value} / ${Math.max(1, state.dataset.length).toLocaleString()}`;
+    $('regenCtxHint').textContent = `${$('regenCtx').value} / ${Math.max(1, state.dataset.length).toLocaleString()}`;
+  }
+
+  // Только при instruct: detectUser + текст. Без instruct — просто текст.
+  function buildSearchText(rawText) {
+    const text = (rawText || '').trim();
+    if (!state.settings.instruct) return text;
+    const u = (state.settings.detectUser || '').trim();
+    if (!u) return text;
+    if (text.startsWith(u)) return text;
+    return u + ' ' + text;
+  }
+
+  function tokenEq(a, b) {
+    if (a === b) return true;
+    const ta = state.idToToken[a], tb = state.idToToken[b];
+    if (ta === undefined || tb === undefined) return false;
+    return ta.toLowerCase() === tb.toLowerCase();
+  }
+
+  function datasetWordAppearsAfter(fromPos, dsWordLower) {
+    const ds = state.dataset;
+    for (let k = fromPos; k < ds.length; k++) {
+      const id = ds[k];
+      if (id === 0) return false;
+      const t = state.idToToken[id];
+      if (t && t.toLowerCase() === dsWordLower) return true;
+    }
+    return false;
+  }
+
+  function lastWordIsOk(dsTok, userTok, searchFrom) {
+    if (!dsTok || !userTok) return false;
+    if (!isLetter(dsTok[0]) || !isLetter(userTok[0])) return true;
+    const dsLow = dsTok.toLowerCase();
+    const userLow = userTok.toLowerCase();
+    if (dsLow === userLow) return true;
+    return datasetWordAppearsAfter(searchFrom, dsLow);
+  }
+
+  function findExactMatch(ctxIds) {
+    const n = ctxIds.length; if (!n) return [];
+    let anchor = -1;
+    for (let j = 0; j < n; j++) if (ctxIds[j] !== WILDCARD) { anchor = j; break; }
+    if (anchor < 0) return [];
+    const list = posIndex.get(ctxIds[anchor]);
+    if (!list || !list.length) return [];
+    const out = [], ds = state.dataset;
+    for (let li = 0; li < list.length; li++) {
+      const p = list[li]; const start = p - anchor;
+      if (start < 0 || start + n > ds.length) continue;
+      let ok = true;
+      for (let j = 0; j < n; j++) { if (ctxIds[j] === WILDCARD) continue; if (!tokenEq(ds[start + j], ctxIds[j])) { ok = false; break; } }
+      if (ok) { const positions = []; for (let j = 0; j < n; j++) positions.push(start + j); out.push({ start, positions, score: 1 }); }
+    }
+    return out;
+  }
+
+  function findPartialMatch(ctxIds, threshold) {
+    const n = ctxIds.length; if (!n) return [];
+    let anchor = -1;
+    for (let j = 0; j < n; j++) if (ctxIds[j] !== WILDCARD) { anchor = j; break; }
+    if (anchor < 0) return [];
+    const list = posIndex.get(ctxIds[anchor]);
+    if (!list || !list.length) return [];
+    const out = [], ds = state.dataset;
+    for (let li = 0; li < list.length; li++) {
+      const p = list[li]; const start = p - anchor;
+      if (start < 0 || start + n > ds.length) continue;
+      let hit = 0, total = 0;
+      for (let j = 0; j < n; j++) { if (ctxIds[j] === WILDCARD) continue; total++; if (tokenEq(ds[start + j], ctxIds[j])) hit++; }
+      if (!(total > 0 && hit / total >= threshold)) continue;
+      const lastIdx = n - 1;
+      const lastDsId = ds[start + lastIdx];
+      const lastUserId = ctxIds[lastIdx];
+      let lastOk = false;
+      if (lastUserId === WILDCARD) lastOk = true;
+      else if (lastDsId === undefined || lastDsId === 0) lastOk = false;
+      else {
+        const lastDsTok = state.idToToken[lastDsId];
+        const lastUserTok = state.idToToken[lastUserId];
+        lastOk = lastWordIsOk(lastDsTok, lastUserTok, start + n);
+      }
+      if (!lastOk) continue;
+      const positions = []; for (let j = 0; j < n; j++) positions.push(start + j);
+      out.push({ start, positions, score: hit / total });
+    }
+    return out;
+  }
+
+  function findExactWordsMatch(userWords) {
+    const n = userWords.length; if (!n) return [];
+    const first = userWords[0]; let starts;
+    if (first.id !== WILDCARD) starts = wordPosIndex.get(first.id) || [];
+    else { starts = []; for (const arr of wordPosIndex.values()) for (const p of arr) starts.push(p); starts.sort((a,b) => a - b); }
+    const out = [], ds = state.dataset;
+    for (let si = 0; si < starts.length; si++) {
+      const start = starts[si]; let dsPos = start, ok = true; const positions = [];
+      for (let k = 0; k < n; k++) {
+        while (dsPos < ds.length && ds[dsPos] !== 0 && !isWordToken(ds[dsPos])) dsPos++;
+        if (dsPos >= ds.length || ds[dsPos] === 0) { ok = false; break; }
+        const uw = userWords[k];
+        if (uw.id !== WILDCARD && !tokenEq(ds[dsPos], uw.id)) { ok = false; break; }
+        positions.push(dsPos); dsPos++;
+      }
+      if (ok && positions.length === n) out.push({ start, positions, score: 1 });
+    }
+    return out;
+  }
+
+  function findPartialWordsMatch(userWords, threshold) {
+    const n = userWords.length; if (!n) return [];
+    const first = userWords[0]; let starts;
+    if (first.id !== WILDCARD) starts = wordPosIndex.get(first.id) || [];
+    else { starts = []; for (const arr of wordPosIndex.values()) for (const p of arr) starts.push(p); starts.sort((a,b) => a - b); }
+    const out = [], ds = state.dataset, denom = n;
+    for (let si = 0; si < starts.length; si++) {
+      const start = starts[si]; let dsPos = start, hit = 0; const positions = [];
+      for (let k = 0; k < n; k++) {
+        while (dsPos < ds.length && ds[dsPos] !== 0 && !isWordToken(ds[dsPos])) dsPos++;
+        if (dsPos >= ds.length || ds[dsPos] === 0) { positions.push(-1); continue; }
+        const uw = userWords[k];
+        if (uw.id === WILDCARD || tokenEq(ds[dsPos], uw.id)) hit++;
+        positions.push(dsPos); dsPos++;
+      }
+      if (!(positions.length > 0 && hit / denom >= threshold)) continue;
+      const lastIdx = n - 1;
+      const lastPos = positions[lastIdx];
+      const lastUserWord = userWords[lastIdx];
+      let lastOk = false;
+      if (lastUserWord.id === WILDCARD) lastOk = true;
+      else if (lastPos === undefined || lastPos < 0) lastOk = false;
+      else {
+        const lastDsTok = state.idToToken[ds[lastPos]];
+        const lastUserTok = state.idToToken[lastUserWord.id];
+        lastOk = lastWordIsOk(lastDsTok, lastUserTok, lastPos + 1);
+      }
+      if (!lastOk) continue;
+      out.push({ start, positions, score: hit / denom });
+    }
+    return out;
+  }
+
+  function findMatches(ctxIds, ctxToks) {
+    const userWords = [];
+    for (let i = 0; i < ctxIds.length; i++) {
+      const t = ctxToks[i] || '';
+      if (ctxIds[i] === WILDCARD || isLetter(t[0])) userWords.push({ id: ctxIds[i], tok: t });
+    }
+    const hasPunct = userWords.length !== ctxIds.length;
+    let res = findExactMatch(ctxIds);
+    if (res.length) return res.map(m => ({ ...m, usedIds: ctxIds.slice(), usedToks: ctxToks.slice() }));
+    if (hasPunct && userWords.length > 0) {
+      res = findExactWordsMatch(userWords);
+      if (res.length) return res.map(m => ({ ...m, usedIds: userWords.map(w => w.id), usedToks: userWords.map(w => w.tok) }));
+    }
+    res = findPartialMatch(ctxIds, PARTIAL_THRESHOLD);
+    if (res.length) return res.map(m => ({ ...m, usedIds: ctxIds.slice(), usedToks: ctxToks.slice() }));
+    if (hasPunct && userWords.length > 0) {
+      res = findPartialWordsMatch(userWords, PARTIAL_THRESHOLD);
+      if (res.length) return res.map(m => ({ ...m, usedIds: userWords.map(w => w.id), usedToks: userWords.map(w => w.tok) }));
+    }
+    return [];
+  }
+
+  function findBranch(searchHistory, ctxSize, usedPositions, ignoreUsed) {
+    const len = searchHistory.length;
+    const from = Math.max(0, len - ctxSize);
+    for (let s = from; s < len; s++) {
+      const slice = searchHistory.slice(s);
+      const cIds = slice.map(x => x.id);
+      const cToks = slice.map(x => x.tok);
+      if (cIds.length === 0) continue;
+      const all = findMatches(cIds, cToks);
+      if (all.length === 0) continue;
+      const pool = ignoreUsed ? all : all.filter(c => !rangeOverlaps(c.start, c.start + cIds.length - 1, usedPositions));
+      if (pool.length > 0) return { pool, usedIds: cIds, usedToks: cToks, level: s };
+    }
+    return null;
+  }
+
+  function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  function rankCandidates(pool, usedIds, usedToks) {
+    const ranked = [];
+    for (const c of pool) {
+      const subMap = buildSubMap(c.positions, usedIds, usedToks);
+      const baseScore = c.score !== undefined ? c.score : 1;
+      const effective = baseScore + subMap.size * 0.5;
+      ranked.push({ cand: c, subMap, baseScore, effective });
+    }
+    ranked.sort((a, b) => {
+      if (b.effective !== a.effective) return b.effective - a.effective;
+      return a.cand.start - b.cand.start;
+    });
+    return ranked;
+  }
+
+  function buildSubMap(positions, usedIds, usedToks) {
+    const m = new Map();
+    if (!positions || !positions.length) return m;
+    let lastPos = -1;
+    for (let j = positions.length - 1; j >= 0; j--) {
+      if (positions[j] >= 0) { lastPos = positions[j]; break; }
+    }
+    const searchFrom = lastPos >= 0 ? lastPos + 1 : 0;
+    for (let j = 0; j < usedIds.length; j++) {
+      const dsPos = positions[j];
+      if (dsPos === undefined || dsPos < 0) continue;
+      const dsId = state.dataset[dsPos];
+      if (dsId === undefined || dsId === 0) continue;
+      const dsTok = state.idToToken[dsId];
+      if (!dsTok || dsTok === END) continue;
+      if (!isLetter(dsTok[0])) continue;
+      const userTok = usedToks[j];
+      if (!userTok || userTok === END) continue;
+      if (!isLetter(userTok[0])) continue;
+      const dsLow = dsTok.toLowerCase();
+      const userLow = userTok.toLowerCase();
+      if (dsLow === userLow) continue;
+      if (!datasetWordAppearsAfter(searchFrom, dsLow)) continue;
+      m.set(dsLow, userTok);
+    }
+    return m;
+  }
+
+  function markRange(a, b, set) { if (b < a) return; for (let i = a; i <= b; i++) set.add(i); }
+  function rangeOverlaps(a, b, set) { for (let i = a; i <= b; i++) if (set.has(i)) return true; return false; }
+
+  function computeDetectUserIds() {
+    if (!state.settings.detectUser) return [];
+    const { ids } = textToIds(state.settings.detectUser, false);
+    return ids.filter(id => id !== WILDCARD);
+  }
+  function matchesDetectUserAt(pos, detectIds) {
+    if (!detectIds.length) return false;
+    if (pos + detectIds.length > state.dataset.length) return false;
+    for (let k = 0; k < detectIds.length; k++) if (!tokenEq(state.dataset[pos + k], detectIds[k])) return false;
+    return true;
+  }
+  function countWords(tokens) { let n = 0; for (const t of tokens) if (t && isLetter(t[0])) n++; return n; }
+
+  function tokenIsBadStart(id) {
+    if (id === undefined || id === 0) return false;
+    const t = state.idToToken[id];
+    return BAD_START_PUNCT.has(t);
+  }
+
+  let _detectAIToksCache = null;
+  let _detectAIToksCacheKey = null;
+  function getDetectAITokens() {
+    const key = state.settings.detectAI || '';
+    if (_detectAIToksCacheKey === key && _detectAIToksCache) return _detectAIToksCache;
+    const { toks } = textToIds(key, true);
+    _detectAIToksCache = toks;
+    _detectAIToksCacheKey = key;
+    return toks;
+  }
+  function stripDetectAIPrefix(tokens) {
+    if (!state.settings.instruct) return tokens;
+    const prefix = getDetectAITokens();
+    if (!prefix.length || tokens.length < prefix.length) return tokens;
+    for (let i = 0; i < prefix.length; i++) {
+      const a = (tokens[i] || '').toLowerCase();
+      const b = (prefix[i] || '').toLowerCase();
+      if (a !== b) return tokens;
+    }
+    return tokens.slice(prefix.length);
+  }
+
+  function randomJump(searchHistory, ctxSize) {
+    const ds = state.dataset;
+    if (ds.length === 0) return false;
+    let randPos = -1;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const p = Math.floor(Math.random() * ds.length);
+      if (ds[p] !== 0 && p + ctxSize <= ds.length) { randPos = p; break; }
+    }
+    if (randPos < 0) return false;
+    const newLen = Math.min(ctxSize, ds.length - randPos);
+    if (newLen <= 0) return false;
+    searchHistory.length = 0;
+    for (let k = 0; k < newLen; k++) {
+      const pid = ds[randPos + k];
+      searchHistory.push({ id: pid, tok: state.idToToken[pid] || END });
+    }
+    logEvent('random_jump', { pos: randPos, len: newLen });
+    return true;
+  }
+
+  let _burstCount = 0, _burstSize = 500;
+  async function pace(outputToks) {
+    _burstCount++;
+    if (_burstCount >= _burstSize) {
+      _burstCount = 0;
+      renderPartial(outputToks);
+      await sleep(BURST_REST_MS);
+    }
+  }
+
+  function askUserContinue(message) {
+    return new Promise(resolve => {
+      const backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop open';
+      const m = document.createElement('div'); m.className = 'modal';
+      const h = document.createElement('h3'); h.textContent = 'Производительность'; m.appendChild(h);
+      const p = document.createElement('p'); p.textContent = message; m.appendChild(p);
+      const a = document.createElement('div'); a.className = 'actions';
+      const bc = document.createElement('button'); bc.textContent = 'Отмена';
+      const bo = document.createElement('button'); bo.textContent = 'Продолжить'; bo.className = 'primary';
+      a.appendChild(bc); a.appendChild(bo); m.appendChild(a);
+      backdrop.appendChild(m); document.body.appendChild(backdrop);
+      const done = (ok) => { backdrop.remove(); resolve(ok); };
+      bc.onclick = () => done(false);
+      bo.onclick = () => done(true);
+    });
+  }
+
+  async function generateResponse(userText, opts) {
+    opts = opts || {};
+    const random   = opts.random   !== undefined ? opts.random   : state.settings.random;
+    const ctxSize  = Math.max(1, opts.contextSize !== undefined ? opts.contextSize : state.settings.context);
+    const infinite = !!state.settings.infinite;
+    const detectIds = computeDetectUserIds();
+
+    const store = opts.store || {};
+    if (!store.usedPositions) store.usedPositions = new Set();
+    if (!store.searchHistory)  store.searchHistory = [];
+    if (!store.outputToks)     store.outputToks = [];
+    if (store.branchPos === undefined) store.branchPos = -1;
+    if (store.branchSubMap === undefined) store.branchSubMap = null;
+    if (store.walkBudget === undefined) store.walkBudget = 0;
+
+    if (!store.initialized) {
+      if (userText) {
+        const { ids, toks } = textToIds(userText, false);
+        for (let i = 0; i < ids.length; i++) store.searchHistory.push({ id: ids[i], tok: toks[i] });
+      }
+      store.initialized = true;
+    }
+
+    const usedPositions = store.usedPositions;
+    const searchHistory = store.searchHistory;
+    const outputToks    = store.outputToks;
+
+    logEvent('gen_start', {
+      userText, ctxSize, infinite, random,
+      instruct: state.settings.instruct,
+      searchHistoryLen: searchHistory.length,
+      outputToksLen: outputToks.length,
+      usedPositionsSize: usedPositions.size,
+      branchPos: store.branchPos,
+      partialThreshold: PARTIAL_THRESHOLD
+    });
+
+    if (searchHistory.length === 0 && store.branchPos < 0) {
+      logEvent('gen_end_empty_history');
+      return tokensToText(outputToks);
+    }
+
+    _burstSize = Math.max(1, Math.floor((state.settings.tokenRate | 0) / 2) || 500);
+    _burstCount = 0;
+    renderPartial(outputToks);
+
+    let totalWordCount = countWords(outputToks);
+
+    async function searchNewBranch() {
+      let found = findBranch(searchHistory, ctxSize, usedPositions, false);
+      if (!found && usedPositions.size > 0) {
+        usedPositions.clear();
+        found = findBranch(searchHistory, ctxSize, usedPositions, true);
+        if (found) logEvent('gen_branch_after_clear');
+      }
+      if (!found && infinite) {
+        if (randomJump(searchHistory, ctxSize)) {
+          found = findBranch(searchHistory, ctxSize, usedPositions, true);
+        }
+      }
+      if (!found) return false;
+
+      const ranked = rankCandidates(found.pool, found.usedIds, found.usedToks);
+      const logRank = ranked.slice(0, 5).map(r => ({
+        start: r.cand.start, base: r.baseScore, sub: r.subMap.size, eff: r.effective
+      }));
+
+      let picked;
+      if (random && ranked.length > 1) picked = ranked[Math.floor(Math.random() * ranked.length)];
+      else picked = ranked[0];
+
+      const pick = picked.cand;
+      store.branchSubMap = picked.subMap;
+
+      let lastRealPos = -1;
+      for (let j = pick.positions.length - 1; j >= 0; j--) {
+        if (pick.positions[j] >= 0) { lastRealPos = pick.positions[j]; break; }
+      }
+      let bp = lastRealPos >= 0 ? lastRealPos + 1 : (pick.start + found.usedIds.length);
+
+      let skippedPunct = 0;
+      while (skippedPunct < MAX_SKIP_LEADING && bp < state.dataset.length) {
+        const id = state.dataset[bp];
+        if (id === 0) break;
+        if (!tokenIsBadStart(id)) break;
+        bp++;
+        skippedPunct++;
+      }
+
+      store.branchPos = bp;
+      markRange(pick.start, Math.max(pick.start, bp - 1), usedPositions);
+      store.walkBudget = random ? 1 : Math.max(1, ctxSize);
+
+      const subMapEntries = [];
+      for (const [k, v] of store.branchSubMap.entries()) subMapEntries.push([k, v]);
+      logEvent('gen_branch', {
+        start: pick.start, contextLen: found.usedIds.length,
+        baseScore: picked.baseScore, subMapSize: picked.subMap.size, effective: picked.effective,
+        lastRealPos, branchPos: bp,
+        walkBudget: store.walkBudget, skippedPunct,
+        subMapEntries, topRanked: logRank
+      });
+      return true;
+    }
+
+    if (store.branchPos < 0) {
+      const ok = await searchNewBranch();
+      if (!ok) { logEvent('gen_end_no_branch_initial'); return tokensToText(outputToks); }
+    }
+
+    const MAX_WALK = 10_000_000;
+    const rate = state.settings.tokenRate || 1000;
+    let perfStart = performance.now();
+    let perfTokens = 0;
+    let perfWarned = false;
+
+    try {
+      for (let step = 0; step < MAX_WALK; step++) {
+        if (state.stopRequested) { logEvent('gen_stop_requested', { step, outputLen: outputToks.length }); break; }
+
+        const needSearch = store.walkBudget <= 0 || store.branchPos < 0 || store.branchPos >= state.dataset.length;
+        if (needSearch) {
+          const ok = await searchNewBranch();
+          if (!ok) { logEvent('gen_end_no_branch', { step, outputLen: outputToks.length }); break; }
+          continue;
+        }
+
+        if (matchesDetectUserAt(store.branchPos, detectIds)) {
+          logEvent('gen_hit_detectUser', { step, pos: store.branchPos, infinite });
+          if (!infinite) break;
+          store.walkBudget = 0;
+          continue;
+        }
+        const id = state.dataset[store.branchPos];
+        if (id === 0) {
+          logEvent('gen_hit_end', { step, pos: store.branchPos, infinite });
+          if (!infinite) break;
+          store.walkBudget = 0;
+          continue;
+        }
+        const tok = state.idToToken[id];
+
+        if (tok === TAG_CONTINUE) {
+          markRange(store.branchPos, store.branchPos, usedPositions);
+          store.branchPos++;
+          store.walkBudget = 0;
+          logEvent('gen_hit_continue', { step });
+          continue;
+        }
+
+        if (tok === TAG_WRITE_DOT || tok === TAG_WRITE_END) {
+          const mode = tok === TAG_WRITE_DOT ? 'dot' : 'end';
+          markRange(store.branchPos, store.branchPos, usedPositions);
+          store.branchPos++;
+          store.walkBudget = 0;
+          logEvent('gen_hit_writeTo', { step, mode });
+          const sub = await writeFromAnotherBranch(searchHistory, ctxSize, detectIds, usedPositions, mode, 0);
+          for (const t of sub) {
+            outputToks.push(t);
+            searchHistory.push({ id: state.tokenToId.get(t) ?? WILDCARD, tok: t });
+            if (isLetter(t[0])) totalWordCount++;
+            await pace(outputToks);
+          }
+          continue;
+        }
+
+        let outTok = tok;
+        if (outTok && isLetter(outTok[0]) && store.branchSubMap) {
+          const low = outTok.toLowerCase();
+          if (store.branchSubMap.has(low)) outTok = store.branchSubMap.get(low);
+        }
+
+        outputToks.push(outTok);
+        searchHistory.push({ id: state.tokenToId.get(outTok) ?? WILDCARD, tok: outTok });
+        if (outTok && isLetter(outTok[0])) totalWordCount++;
+        markRange(store.branchPos, store.branchPos, usedPositions);
+        const emitPos = store.branchPos;
+        store.branchPos++;
+        store.walkBudget--;
+
+        logEvent('gen_emit', {
+          step, pos: emitPos,
+          dsId: id, dsTok: tok, outTok,
+          wordCount: totalWordCount, outputLen: outputToks.length,
+          walkBudgetLeft: store.walkBudget
+        });
+
+        let naturalEnd = false;
+        if (!infinite) {
+          if (state.settings.stopDot && outTok && /[.!?]/.test(outTok)) {
+            naturalEnd = true; logEvent('gen_stop_dot', { step, outTok });
+          } else if (state.settings.stopWordLimit && totalWordCount >= state.settings.wordLimit) {
+            naturalEnd = true; logEvent('gen_stop_wordLimit', { step, totalWordCount });
+          }
+        }
+
+        await pace(outputToks);
+        if (naturalEnd) break;
+
+        perfTokens++;
+        if (!perfWarned && perfTokens >= rate) {
+          const elapsed = performance.now() - perfStart;
+          if (elapsed > PERF_EXPECTED_MS + PERF_TOLERANCE_MS) {
+            logEvent('gen_perf_warn', { elapsed, tokens: perfTokens, rate });
+            const ok = await askUserContinue(
+              `При таких настройках и устройстве не получается выдавать ${rate.toLocaleString()} ток/с. Продолжить? Есть риск зависания с концами!`
+            );
+            if (!ok) { state.stopRequested = true; break; }
+            perfWarned = true;
+          }
+          perfStart = performance.now();
+          perfTokens = 0;
+        }
+      }
+    } catch (err) {
+      logEvent('gen_exception', { message: String(err && err.message || err), stack: String(err && err.stack || '') });
+    }
+
+    renderPartial(outputToks);
+    logEvent('gen_end', { outputLen: outputToks.length, wordCount: totalWordCount });
+    return tokensToText(outputToks);
+  }
+
+  async function writeFromAnotherBranch(searchHistory, ctxSize, detectIds, usedPositions, mode, depth) {
+    if (depth > 4) return [];
+    const found = findBranch(searchHistory, ctxSize, usedPositions, false);
+    if (!found) return [];
+    const ranked = rankCandidates(found.pool, found.usedIds, found.usedToks);
+    let picked = state.settings.random && ranked.length > 1
+      ? ranked[Math.floor(Math.random() * ranked.length)]
+      : ranked[0];
+    const pick = picked.cand;
+    let lastRealPos = -1;
+    for (let j = pick.positions.length - 1; j >= 0; j--) {
+      if (pick.positions[j] >= 0) { lastRealPos = pick.positions[j]; break; }
+    }
+    if (lastRealPos < 0) return [];
+    markRange(pick.start, lastRealPos, usedPositions);
+    const subMap = picked.subMap;
+    let pos = lastRealPos + 1;
+    const tokens = [];
+    const SAFETY = 100_000;
+    while (pos < state.dataset.length && tokens.length < SAFETY) {
+      if (state.stopRequested) break;
+      if (matchesDetectUserAt(pos, detectIds)) break;
+      const id = state.dataset[pos];
+      if (id === 0) break;
+      const tok = state.idToToken[id];
+      if (tok === TAG_CONTINUE) { markRange(pos, pos, usedPositions); pos++; continue; }
+      if (tok === TAG_WRITE_DOT || tok === TAG_WRITE_END) { markRange(pos, pos, usedPositions); pos++; continue; }
+      let outTok = tok;
+      if (outTok && isLetter(outTok[0])) { const low = outTok.toLowerCase(); if (subMap.has(low)) outTok = subMap.get(low); }
+      tokens.push(outTok);
+      markRange(pos, pos, usedPositions);
+      pos++;
+      if (mode === 'dot' && /[.!?]/.test(outTok)) break;
+    }
+    return tokens;
+  }
+
+  function tokensToText(tokens) {
+    const stripped = stripDetectAIPrefix(tokens);
+    const isWord      = t => /^[a-zA-Zа-яА-ЯёЁ0-9]/.test(t);
+    const isSentence  = t => /^[.!?,;:…]+$/.test(t);
+    const isOpenBrack = t => /^[«„“(\[{]$/.test(t);
+    const isCloseBrk  = t => /^[»”)\]}]$/.test(t);
+    const isDash      = t => /^[—–]$/.test(t);
+    const isNewline   = t => t === '\n';
+    let out = '';
+    for (const t of stripped) {
+      if (t === END || !t) continue;
+      if (isNewline(t)) { out = out.replace(/[ \t]+$/, '') + '\n'; }
+      else if (isWord(t)) {
+        if (out && !out.endsWith(' ') && !out.endsWith('\n') &&
+            !out.endsWith('«') && !out.endsWith('(') && !out.endsWith('„') && !out.endsWith('“') &&
+            !out.endsWith('[') && !out.endsWith('{')) out += ' ';
+        out += t;
+      } else if (isOpenBrack(t)) { if (out && !out.endsWith(' ') && !out.endsWith('\n')) out += ' '; out += t; }
+      else if (isCloseBrk(t)) { out = out.replace(/[ \t]+$/, '') + t; }
+      else if (isSentence(t)) { out = out.replace(/[ \t]+$/, '') + t; }
+      else if (isDash(t)) { out = out.replace(/[ \t]+$/, '') + ' ' + t + ' '; }
+      else { if (out && !out.endsWith(' ') && !out.endsWith('\n')) out += ' '; out += t; }
+    }
+    return out.replace(/[ \t]+$/, '');
+  }
+
+  function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+        return;
+      }
+    } catch (e) {}
+    legacyCopy(text);
+  }
+  function legacyCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) {}
+  }
+
+  function renderMessage(msg, idx) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + msg.role;
+    div.dataset.idx = idx;
+    div.textContent = msg.text;
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    const addBtn = (icon, title, handler, cls) => {
+      const b = document.createElement('button');
+      b.textContent = icon; b.title = title; b.onclick = handler;
+      if (cls) b.className = cls;
+      actions.appendChild(b);
+    };
+    addBtn('📋', 'Копировать', () => copyText(msg.text));
+    addBtn('🔊', 'Озвучить', () => speak(msg.text));
+    addBtn('✏️', 'Изменить', () => { inputEl.value = msg.text; inputEl.focus(); autoGrow(); });
+    if (msg.role === 'ai') {
+      addBtn('🔄', 'Перегенерировать', () => openRegenModal(idx));
+      if (msg._genStore && msg._genStore.initialized) {
+        addBtn('➕', 'Продолжить', () => continueGeneration(idx), 'cont');
+      }
+    }
+    div.appendChild(actions);
+    messagesEl.appendChild(div);
+    maybeScrollToBottom(true);
+    return div;
+  }
+  function addMessage(role, text, genStore) {
+    const msg = { role, text }; if (genStore) msg._genStore = genStore;
+    state.messages.push(msg);
+    return renderMessage(msg, state.messages.length - 1);
+  }
+  function addSystemMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'sys-note'; div.textContent = text;
+    messagesEl.appendChild(div); maybeScrollToBottom(true);
+  }
+  function rerenderAll() { messagesEl.innerHTML = ''; state.messages.forEach((m, i) => renderMessage(m, i)); maybeScrollToBottom(); }
+  let partialEl = null;
+  function renderPartial(tokens) { if (!partialEl) return; partialEl.textContent = tokensToText(tokens); updateScrollBtn(); }
+
+  async function sendMessage() {
+    const rawText = inputEl.value.trim();
+    if (!rawText || state.isGenerating) return;
+    inputEl.value = ''; autoGrow();
+    addMessage('user', rawText);
+    const searchText = buildSearchText(rawText);
+    logEvent('send_message', { rawText, searchText, ctxSize: state.settings.context, infinite: state.settings.infinite, random: state.settings.random, instruct: state.settings.instruct });
+
+    state.isGenerating = true; state.stopRequested = false;
+    sendBtn.textContent = '⏹'; sendBtn.title = 'Остановить';
+
+    const aiIdx = state.messages.length;
+    const aiMsg = { role: 'ai', text: '', _genStore: {} };
+    state.messages.push(aiMsg);
+    const aiEl = renderMessage(aiMsg, aiIdx);
+    partialEl = aiEl; maybeScrollToBottom(true);
+
+    try {
+      const text = await generateResponse(searchText, { store: aiMsg._genStore });
+      aiMsg.text = text; rerenderAll();
+    } finally {
+      state.isGenerating = false; state.stopRequested = false; partialEl = null;
+      sendBtn.textContent = '➤'; sendBtn.title = 'Отправить';
+    }
+  }
+  function stopGeneration() { state.stopRequested = true; logEvent('stop_button_pressed'); }
+
+  async function continueGeneration(msgIdx) {
+    if (state.isGenerating) return;
+    const msg = state.messages[msgIdx];
+    if (!msg || !msg._genStore) return;
+
+    logEvent('continue_pressed', { msgIdx, prevBranchPos: msg._genStore.branchPos });
+
+    state.isGenerating = true; state.stopRequested = false;
+    sendBtn.textContent = '⏹'; sendBtn.title = 'Остановить';
+    const el = messagesEl.querySelector(`[data-idx="${msgIdx}"]`);
+    if (el) { el.textContent = ''; partialEl = el; }
+
+    try {
+      msg._genStore.branchPos = -1;
+      msg._genStore.walkBudget = 0;
+      const text = await generateResponse('', { store: msg._genStore });
+      msg.text = text; rerenderAll();
+    } finally {
+      state.isGenerating = false; state.stopRequested = false; partialEl = null;
+      sendBtn.textContent = '➤'; sendBtn.title = 'Отправить';
+    }
+  }
+
+  let regenTargetIdx = -1;
+  function openRegenModal(idx) {
+    regenTargetIdx = idx;
+    $('regenRandom').value = state.settings.random ? 'yes' : 'no';
+    const max = Math.max(1, state.dataset.length);
+    $('regenCtx').max = max;
+    $('regenCtx').value = Math.min(state.settings.context, max);
+    $('regenCtxNum').max = max;
+    $('regenCtxNum').value = $('regenCtx').value;
+    updateCtxHints();
+    regenModal.classList.add('open');
+  }
+  $('regenCancel').onclick = () => regenModal.classList.remove('open');
+  $('regenOk').onclick = async () => {
+    regenModal.classList.remove('open');
+    if (regenTargetIdx < 0) return;
+    let rawText = '';
+    for (let i = regenTargetIdx - 1; i >= 0; i--) {
+      if (state.messages[i].role === 'user') { rawText = state.messages[i].text; break; }
+    }
+    if (!rawText) return;
+    const searchText = buildSearchText(rawText);
+    const random = $('regenRandom').value === 'yes';
+    const ctxSize = +$('regenCtx').value;
+    state.isGenerating = true; state.stopRequested = false;
+    sendBtn.textContent = '⏹';
+    const msg = state.messages[regenTargetIdx];
+    msg._genStore = {};
+    const el = messagesEl.querySelector(`[data-idx="${regenTargetIdx}"]`);
+    if (el) { el.textContent = ''; partialEl = el; }
+    logEvent('regen_start', { idx: regenTargetIdx, rawText, ctxSize, random });
+    try {
+      const text = await generateResponse(searchText, { store: msg._genStore, random, contextSize: ctxSize });
+      msg.text = text; rerenderAll();
+    } finally {
+      state.isGenerating = false; state.stopRequested = false; partialEl = null;
+      sendBtn.textContent = '➤';
+    }
+  };
+
+  function syncSettingsToUI() {
+    const max = Math.max(1, state.dataset.length);
+    $('ctxRange').max = max; $('ctxNum').max = max;
+    $('ctxRange').value = Math.min(state.settings.context, max);
+    $('ctxNum').value = $('ctxRange').value;
+    $('randomSelect').value = state.settings.random ? 'yes' : 'no';
+    $('instructCheck').checked = state.settings.instruct;
+    $('detectAI').value = displayDetect(state.settings.detectAI);
+    $('detectUser').value = displayDetect(state.settings.detectUser);
+    $('endTagsInput').value = displayEndTags(state.settings.endTags);
+    $('stopEnd').checked = state.settings.stopEnd;
+    $('stopDot').checked = state.settings.stopDot;
+    $('stopWordLimit').checked = state.settings.stopWordLimit;
+    $('wordLimit').value = state.settings.wordLimit;
+    $('stopNoMatch').checked = state.settings.stopNoMatch;
+    $('wordsRemaining').value = state.settings.wordsRemaining;
+    $('infiniteCheck').checked = state.settings.infinite;
+    $('tokenRate').value = state.settings.tokenRate;
+    $('speakToggle').classList.toggle('active', state.settings.speakText);
+    updateSettingsEnabled(); updateCtxHints();
+  }
+  function updateSettingsEnabled() {
+    const anyAuto = state.settings.stopEnd || state.settings.stopDot || state.settings.stopWordLimit || state.settings.stopNoMatch;
+    const inf = state.settings.infinite;
+    const autoDisabled = inf;
+    ['stopEnd', 'stopDot', 'stopWordLimit', 'stopNoMatch'].forEach(id => {
+      const el = $(id); el.disabled = autoDisabled;
+      el.closest('.row').classList.toggle('disabled', autoDisabled);
+    });
+    $('infiniteCheck').disabled = anyAuto;
+    $('infiniteCheck').closest('.row').classList.toggle('disabled', anyAuto);
+    $('wordLimit').disabled      = autoDisabled || !state.settings.stopWordLimit;
+    $('wordsRemaining').disabled = autoDisabled || !state.settings.stopNoMatch;
+  }
+
+  $('ctxRange').oninput = () => { state.settings.context = +$('ctxRange').value; $('ctxNum').value = $('ctxRange').value; updateCtxHints(); };
+  $('ctxNum').oninput = () => { const v = Math.max(1, Math.min(+$('ctxNum').value || 1, +$('ctxRange').max)); $('ctxRange').value = v; state.settings.context = v; updateCtxHints(); };
+  $('regenCtx').oninput = () => { $('regenCtxNum').value = $('regenCtx').value; updateCtxHints(); };
+  $('regenCtxNum').oninput = () => { const v = Math.max(1, Math.min(+$('regenCtxNum').value || 1, +$('regenCtx').max)); $('regenCtx').value = v; updateCtxHints(); };
+  $('randomSelect').onchange = () => { state.settings.random = $('randomSelect').value === 'yes'; logEvent('random_changed', { random: state.settings.random }); };
+  $('instructCheck').onchange = () => { state.settings.instruct = $('instructCheck').checked; logEvent('instruct_changed', { instruct: state.settings.instruct }); };
+  $('detectAI').oninput   = () => { state.settings.detectAI = parseDetect($('detectAI').value); _detectAIToksCacheKey = null; };
+  $('detectUser').oninput = () => { state.settings.detectUser = parseDetect($('detectUser').value); };
+  $('endTagsInput').oninput = () => {
+    state.settings.endTags = parseEndTags($('endTagsInput').value);
+    logEvent('end_tags_changed', { endTags: state.settings.endTags.slice() });
+  };
+  $('tokenRate').oninput  = () => { state.settings.tokenRate = Math.max(MIN_TOKEN_RATE, Math.min(MAX_TOKEN_RATE, +$('tokenRate').value || 1000)); };
+
+  const bindStop = (id, key) => {
+    $(id).onchange = () => {
+      state.settings[key] = $(id).checked;
+      if ($(id).checked) { state.settings.infinite = false; $('infiniteCheck').checked = false; }
+      updateSettingsEnabled();
+    };
+  };
+  bindStop('stopEnd', 'stopEnd');
+  bindStop('stopDot', 'stopDot');
+  bindStop('stopWordLimit', 'stopWordLimit');
+  bindStop('stopNoMatch', 'stopNoMatch');
+  $('wordLimit').oninput      = () => { state.settings.wordLimit = +$('wordLimit').value; };
+  $('wordsRemaining').oninput = () => { state.settings.wordsRemaining = +$('wordsRemaining').value; };
+  $('infiniteCheck').onchange = () => {
+    state.settings.infinite = $('infiniteCheck').checked;
+    if (state.settings.infinite) {
+      state.settings.stopEnd = false;        $('stopEnd').checked = false;
+      state.settings.stopDot = false;        $('stopDot').checked = false;
+      state.settings.stopWordLimit = false;  $('stopWordLimit').checked = false;
+      state.settings.stopNoMatch = false;    $('stopNoMatch').checked = false;
+    } else {
+      const anyAuto = state.settings.stopEnd || state.settings.stopDot || state.settings.stopWordLimit || state.settings.stopNoMatch;
+      if (!anyAuto) { state.settings.stopEnd = true; $('stopEnd').checked = true; }
+    }
+    updateSettingsEnabled();
+  };
+
+  $('openSidebar').onclick  = () => sidebarEl.classList.add('open');
+  $('closeSidebar').onclick = () => sidebarEl.classList.remove('open');
+
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'ru-RU';
+    window.speechSynthesis.speak(u);
+  }
+  $('speakToggle').onclick = () => { state.settings.speakText = !state.settings.speakText; $('speakToggle').classList.toggle('active', state.settings.speakText); };
+
+  $('micBtn').onclick = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { addSystemMessage('Голосовой ввод не поддерживается браузером.'); return; }
+    const r = new SR(); r.lang = 'ru-RU'; r.interimResults = false;
+    r.onresult = e => { inputEl.value += (inputEl.value ? ' ' : '') + e.results[0][0].transcript; autoGrow(); };
+    try { r.start(); } catch (e) {}
+  };
+
+  $('clearChat').onclick = () => { if (!state.messages.length) return; state.messages = []; messagesEl.innerHTML = ''; addSystemMessage('Чат очищен.'); };
+
+  $('attachBtn').onclick = () => fileInput.click();
+  fileInput.onchange = async () => { if (fileInput.files.length) { await loadFiles(Array.from(fileInput.files)); fileInput.value = ''; } };
+  sendBtn.onclick = () => { if (state.isGenerating) stopGeneration(); else sendMessage(); };
+  inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (state.isGenerating) stopGeneration(); else sendMessage(); } });
+  inputEl.addEventListener('input', autoGrow);
+  function autoGrow() { inputEl.style.height = 'auto'; inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px'; }
+
+  $('exportBtn').onclick = () => {
+    const data = { version: 1, settings: state.settings, idToToken: state.idToToken, dataset: Array.from(state.dataset) };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'parrot-ai.json'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('exportBinBtn').onclick = () => {
+    // формат PRT2: 'PRT2' | u32 версия=2 | u32 длина JSON | JSON {idToToken, settings} | Uint32 датасет
+    const meta = new TextEncoder().encode(JSON.stringify({ idToToken: state.idToToken, settings: state.settings }));
+    const head = new Uint8Array(12); head.set([0x50, 0x52, 0x54, 0x32]);
+    const hv = new DataView(head.buffer); hv.setUint32(4, 2, true); hv.setUint32(8, meta.length, true);
+    const u32 = new Uint32Array(state.dataset);
+    const blob = new Blob([head, meta, u32.buffer], { type: 'application/octet-stream' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'Parrot-ai.bin'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('importBtn').onclick = () => importFile.click();
+  importFile.onchange = async () => {
+    const f = importFile.files[0]; if (!f) return;
+    logEvent('import_start', { name: f.name, size: f.size });
+    try {
+      if (f.name.endsWith('.json')) {
+        const txt = await f.text(); const data = JSON.parse(txt);
+        if (data.settings) Object.assign(state.settings, data.settings);
+        if (!Array.isArray(state.settings.endTags)) state.settings.endTags = ['<s_text>', '</s_text>'];
+        state.idToToken = data.idToToken || [END];
+        state.tokenToId = new Map(state.idToToken.map((t, i) => [t, i]));
+        state.lowerToId = new Map();
+        state.idToToken.forEach((t, i) => { const low = t.toLowerCase(); if (!state.lowerToId.has(low)) state.lowerToId.set(low, i); });
+        state.dataset = data.dataset || [];
+        buildIndices(); applyAutoRate(); syncSettingsToUI(); refreshContextLimits();
+        _detectAIToksCacheKey = null;
+        addSystemMessage(`Модель импортирована: ${state.dataset.length.toLocaleString()} токенов.`);
+      } else if (f.name.endsWith('.bin')) {
+        const buf = await f.arrayBuffer(), bytes = new Uint8Array(buf);
+        const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+        if (magic === 'PRT2') {
+          const metaLen = new DataView(buf).getUint32(8, true);
+          const meta = JSON.parse(new TextDecoder().decode(bytes.subarray(12, 12 + metaLen)));
+          if (meta.settings) Object.assign(state.settings, meta.settings);
+          if (!Array.isArray(state.settings.endTags)) state.settings.endTags = ['<s_text>', '</s_text>'];
+          state.idToToken = meta.idToToken || [END];
+          state.tokenToId = new Map(state.idToToken.map((t, i) => [t, i]));
+          state.lowerToId = new Map();
+          state.idToToken.forEach((t, i) => { const low = t.toLowerCase(); if (!state.lowerToId.has(low)) state.lowerToId.set(low, i); });
+          state.dataset = Array.from(new Uint32Array(buf.slice(12 + metaLen)));
+          buildIndices(); applyAutoRate(); syncSettingsToUI(); refreshContextLimits(); _detectAIToksCacheKey = null;
+          addSystemMessage(`Модель импортирована: ${state.dataset.length.toLocaleString()} токенов, словарь ${state.idToToken.length.toLocaleString()}.`);
+        } else {
+          addSystemMessage('Этот .bin старого формата (без словаря). Экспортируйте заново кнопкой «Экспорт .bin» или импортируйте .json.');
+        }
+      } else { addSystemMessage('Неподдерживаемый формат. Только .json / .bin.'); }
+    } catch (e) { addSystemMessage('Ошибка импорта: ' + e.message); logEvent('import_error', { message: String(e && e.message || e) }); }
+    importFile.value = '';
+  };
+
+  const dropZone = $('dropZone');
+  let welcomeFiles = [];
+  dropZone.onclick = () => welcomeFile.click();
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.txt'));
+    if (files.length) { welcomeFiles = files; $('welcomeHint').textContent = `Выбрано файлов: ${files.length}`; }
+  });
+  welcomeFile.onchange = () => {
+    if (welcomeFile.files.length) { welcomeFiles = Array.from(welcomeFile.files); $('welcomeHint').textContent = `Выбрано файлов: ${welcomeFiles.length}`; }
+  };
+  $('startChat').onclick = async () => {
+    state.settings.endTags = parseEndTags($('welcomeEndTags').value);
+    logEvent('end_tags_from_welcome', { endTags: state.settings.endTags.slice() });
+    if (welcomeFiles.length) { welcomeModal.classList.remove('open'); await loadFiles(welcomeFiles); }
+    else { welcomeModal.classList.remove('open'); }
+  };
+  $('skipWelcome').onclick = () => {
+    state.settings.endTags = parseEndTags($('welcomeEndTags').value);
+    welcomeModal.classList.remove('open');
+  };
+
+  $('welcomeEndTags').value = displayEndTags(state.settings.endTags);
+
+  syncSettingsToUI(); refreshContextLimits(); updateScrollBtn(); updateLogHint();
+  logEvent('app_init', { userAgent: navigator.userAgent, defaultRate: state.settings.tokenRate, partialThreshold: PARTIAL_THRESHOLD, endTags: state.settings.endTags.slice() });
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ const https = require('https');
 const { WebSocketServer } = require('ws');
 const AntiClick = require(path.join(__dirname, '..', 'anticlick.js'));
 const ReleasePlan = require(path.join(__dirname, 'release-plan.js'));
+const Parrot = require(path.join(__dirname, 'parrot.js'));
 
 const PORT = +process.env.PORT || 3000;
 const ROOT = path.resolve(process.env.GAME_ROOT || path.join(__dirname, '..'));
@@ -790,6 +791,52 @@ const dmKey = (a, b) => [a, b].sort().join('|');
 function chatMsg(u, text, room) { return { id: nid('m'), from: u.display, admin: !!u.admin, owner: !!u.owner, av: u.avatar || null, col: u.color || '', text, at: now(), room: room || 'global', react: {} }; }
 function dropFrom(arr, v) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); }
 
+/* ---------------- ParrotAI — болтливый попугай в общем чате ----------------
+   Модель: server/models/Parrot-ai.bin (или .json) — её обучение делает
+   страница tools/parrot-trainer.html. Включается и настраивается из админки. */
+const PARROT_CFG_DEFAULT = { botName: 'ParrotAI', trigger: 'q:', askQuestion: true, answerAll: false, delaySec: 1, maxTokens: 400, contextSize: 8, random: false };
+/* вопросы, на которые стоит отвечать: «что…», «как…», «почему…» и т.п. */
+const QWORD_RE = /^(что|кто|чем|чём|почему|зачем|где|когда|как|какой|какая|какие|каком|сколько|куда|откуда|можно|правда|что делать|что там)\b/i;
+function parrotCfg() { return Object.assign({}, PARROT_CFG_DEFAULT, (db.meta && db.meta.parrotCfg) || {}); }
+function cleanParrotCfg(c) {
+  const out = {};
+  if (c.botName != null) out.botName = cleanText(c.botName, 24) || 'ParrotAI';
+  if (c.trigger != null) out.trigger = cleanText(c.trigger, 10);
+  if (c.askQuestion != null) out.askQuestion = !!c.askQuestion;
+  if (c.answerAll != null) out.answerAll = !!c.answerAll;
+  if (c.delaySec != null) out.delaySec = Math.min(30, Math.max(0, Number(c.delaySec) || 0));
+  if (c.maxTokens != null) out.maxTokens = Math.min(1000, Math.max(10, Math.floor(Number(c.maxTokens) || 400)));
+  if (c.contextSize != null) out.contextSize = Math.min(50, Math.max(1, Math.floor(Number(c.contextSize) || 8)));
+  if (c.random != null) out.random = !!c.random;
+  return out;
+}
+function isParrotTarget(text, c) {
+  const t = String(text || '').trim(), low = t.toLowerCase();
+  if (!t) return false;
+  if (c.answerAll) return true;
+  if (c.trigger && low.startsWith(c.trigger.toLowerCase())) return true;
+  if (c.askQuestion && /\?\s*$/.test(t)) return true;
+  if (c.askQuestion && QWORD_RE.test(t)) return true;
+  if (c.botName && low.includes(String(c.botName).toLowerCase())) return true;
+  return false;
+}
+/* ответ в чат с небольшой задержкой; не чаще 20 ответов в минуту */
+function parrotReply(question, room) {
+  const c = parrotCfg();
+  if (limited('parrot', 20, 60000)) return;
+  const t = setTimeout(() => {
+    let ans = null;
+    try { ans = Parrot.answer(question, c); } catch (e) { ans = null; }
+    if (!ans) return;
+    const msg = { id: nid('m'), from: c.botName, admin: false, owner: false, bot: true, av: null, col: '', text: ans.slice(0, CFG.chatMax), at: now(), room: room || 'global', react: {} };
+    const box = (!room || room === 'global') ? db.chat : (db.rooms[room] = db.rooms[room] || []);
+    box.push(msg); if (box.length > CFG.chatMax) box.splice(0, box.length - CFG.chatMax);
+    markDirty(); pushAll({ t: 'chat.msg', msg });
+  }, Math.max(0, c.delaySec) * 1000 + Math.floor(Math.random() * 400));
+  if (t.unref) t.unref();
+}
+const PARROT_LOAD = Parrot.load();
+
 const handlers = {
   async ping() { return {}; },
 
@@ -863,6 +910,8 @@ const handlers = {
     box.push(msg); if (box.length > CFG.chatMax) box.splice(0, box.length - CFG.chatMax);
     stats(u).msgs++; addXp(u, CFG.xpMsg);
     markDirty(); pushAll({ t: 'chat.msg', msg });
+    /* ParrotAI отвечает в общем чате, если его спросили (включено в админке) */
+    if (room === 'global' && db.meta && db.meta.parrotOn && isParrotTarget(text, parrotCfg())) parrotReply(text, room);
     return {};
   },
   async 'chat.react'(ctx, m) {
@@ -1295,6 +1344,15 @@ const handlers = {
     markDirty(); kick(o.name, 'Пароль изменён администратором'); audit(ctx.u.display, 'admin.setpass', o.display); return {};
   },
   async 'admin.audit'(ctx) { need(ctx); return { log: db.audit.slice(-100).reverse() }; },
+  /* ParrotAI: включение/выключение, настройки, перезагрузка модели */
+  async 'admin.parrot'(ctx, m) {
+    need(ctx);
+    db.meta = db.meta || {};
+    if (typeof m.on === 'boolean') { db.meta.parrotOn = m.on; markDirty(); audit(ctx.u.display, 'parrot.toggle', m.on ? 'включён' : 'выключен'); }
+    if (m.cfg && typeof m.cfg === 'object') { db.meta.parrotCfg = Object.assign({}, db.meta.parrotCfg || {}, cleanParrotCfg(m.cfg)); markDirty(); audit(ctx.u.display, 'parrot.cfg', JSON.stringify(db.meta.parrotCfg)); }
+    if (m.reload) { const st = Parrot.load(); audit(ctx.u.display, 'parrot.reload', st.loaded ? 'модель загружена' : (st.error || 'ошибка')); return { on: !!db.meta.parrotOn, status: st, cfg: parrotCfg() }; }
+    return { on: !!db.meta.parrotOn, status: Parrot.status(), cfg: parrotCfg() };
+  },
 };
 function need(ctx) { if (!ctx.u.admin) throw new Error('Нет прав'); }
 function needOwner(ctx) { if (!ctx.u.owner) throw new Error('Только владелец'); }
@@ -1550,6 +1608,7 @@ if (require.main === module) {
     const lc = localToolchain();
     console.log('выпуск обновлений: набор для сборки на этом компьютере — ' + (ReleasePlan.canLocal(lc) ? 'есть (локальная сборка)' : 'нет: ' + ReleasePlan.missingLocal(lc).join(', ')));
     console.log('выпуск обновлений: GitHub — ' + (ReleasePlan.canCloud({ token: GH_TOKEN, repo: GH_REPO }) ? GH_REPO + ' (сборка в облаке)' : 'не настроен'));
+    console.log('ParrotAI: ' + (PARROT_LOAD.loaded ? `модель ${PARROT_LOAD.file} (токенов ${PARROT_LOAD.tokens}, словарь ${PARROT_LOAD.vocab})` : (PARROT_LOAD.error || 'модель не найдена')));
   });
   const bye = () => { try { flush(); } catch (e) {} process.exit(0); };
   process.on('SIGINT', bye); process.on('SIGTERM', bye);
