@@ -17,7 +17,7 @@ var game: VCGame
 var _money_lbl: Label
 var _sub_lbl: Label
 var _skin_btn: Button
-var _tab_bar: HBoxContainer
+var _tab_bar: GridContainer
 var _content: VBoxContainer
 var _toast_box: VBoxContainer
 var _tab := "click"
@@ -187,6 +187,8 @@ func _build_ui() -> void:
 	_money_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_sub_lbl = _label("0/сек · 1/клик", 12, MUTED)
 	_sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sub_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_sub_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tv.add_child(_money_lbl)
 	tv.add_child(_sub_lbl)
 	top.add_child(tv)
@@ -201,16 +203,18 @@ func _build_ui() -> void:
 	_skin_btn.pressed.connect(_on_click)
 	root.add_child(_skin_btn)
 
-	# вкладки
-	_tab_bar = HBoxContainer.new()
-	_tab_bar.add_theme_constant_override("separation", 6)
+	# вкладки: сетка 3×2 — на узком экране в один ряд не влезают
+	_tab_bar = GridContainer.new()
+	_tab_bar.columns = 3
+	_tab_bar.add_theme_constant_override("h_separation", 6)
+	_tab_bar.add_theme_constant_override("v_separation", 6)
 	_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(_tab_bar)
 	for t in [["click", "🖱️ Клик"], ["up", "⬆️ Апгрейды"], ["skins", "🎭 Скины"],
 			["casino", "🎰 Казино"], ["crypto", "💎 Крипта"], ["more", "📦 Ещё"]]:
 		var b := _button(String(t[1]), 12)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.custom_minimum_size = Vector2(0, 44)
+		b.custom_minimum_size = Vector2(0, 40)
 		b.pressed.connect(_show_tab.bind(String(t[0])))
 		_tab_bar.add_child(b)
 
@@ -697,7 +701,10 @@ func _build_crypto() -> void:
 		var cnt := _label("%d/%d GPU" % [f["gpus"].size(), int(f["max_gpus"])], 11, MUTED)
 		h.add_child(cnt)
 		v.add_child(h)
-		var chips := _row(4)
+		var chips := HFlowContainer.new()
+		chips.add_theme_constant_override("h_separation", 4)
+		chips.add_theme_constant_override("v_separation", 4)
+		chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if f["gpus"].is_empty():
 			chips.add_child(_label("пусто", 11, MUTED))
 		else:
@@ -868,8 +875,9 @@ func _build_more() -> void:
 		var h := _row(6)
 		h.add_child(_label(String(a["emoji"]), 16, TEXT))
 		var av := _vbox(0)
-		av.add_child(_label(String(a["name"]), 12.5, GREEN if ok else TEXT))
-		av.add_child(_label(String(a["desc"]), 10.5, MUTED))
+		av.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		av.add_child(_label(String(a["name"]), 12.5, GREEN if ok else TEXT, true))
+		av.add_child(_label(String(a["desc"]), 10.5, MUTED, true))
 		h.add_child(av)
 		h.add_child(_spacer())
 		h.add_child(_label("✅" if ok else "—", 13, GREEN if ok else MUTED))
