@@ -1,15 +1,16 @@
-; VitalyaClicker 69 — прототип на Godot 4 (фундамент переноса с веб-версии).
-; Это НЕ полный перенос: здесь только кликер, экономика и сохранение,
-; чтобы начать проект в Godot и наращивать функции по одному.
-; Открыть: Godot 4.2+ → Import → выбрать эту папку (project.godot).
-; Запуск: F5.
+; VitalyaClicker 69 — перенос на Godot 4, этап 1: оффлайн-игра.
+; Готово: клик, апгрейды, скины и крафт, казино, крипта, майнинг,
+; кредиты, новости, достижения, сохранение и оффлайн-доход.
+; Дальше: аккаунты и облако, чат, карты, работа, сад.
+; Открыть: Godot 4.x → Import → выбрать эту папку (project.godot).
+; Запуск: F5 или run-godot.cmd.
 
 config_version=5
 
 [application]
 
 config/name="VitalyaClicker 69 — Godot"
-config/description="Прототип кликера: деньги, апгрейды, авто-доход, сохранение."
+config/description="Перенос кликера на Godot, этап 1: оффлайн-игра (клик, апгрейды, скины, казино, крипта, майнинг, кредиты, достижения)."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.2", "GL Compatibility")
 config/icon="res://icon.svg"

@@ -23,4 +23,4 @@ if not defined GODOT (
   exit /b 1
 )
 
-start "" "%GODOT%" --path "%DIR%"
+start "" "%GODOT%" -e --path "%DIR%"
