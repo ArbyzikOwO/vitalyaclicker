@@ -552,8 +552,8 @@ func _build_click() -> void:
 	_content.add_child(tip)
 	var stage := _card(Color(PURPLE, 0.20), 16)
 	var sv := _vbox(4)
-	sv.add_child(_label("ПОРТ НА GODOT · ЭТАП 1", 11, PURPLE))
-	sv.add_child(_label("Оффлайн-игра: клик, апгрейды, скины и крафт, казино, крипта, майнинг, кредиты, новости, достижения, автосохранение и оффлайн-доход. Облако, аккаунты, чат, карты и сад — следующие этапы.", 11, MUTED, true))
+	sv.add_child(_label("ПОРТ НА GODOT · ЭТАП 2", 11, PURPLE))
+	sv.add_child(_label("Аккаунт и облако: прогресс в формате веб-версии (data.bin) синхронизируется сам, сессия помнится 7 дней. Клик, апгрейды, скины и крафт, казино, крипта, майнинг, кредиты, новости, достижения и оффлайн-доход — на месте. Чат, друзья, карты и сад — следующие этапы.", 11, MUTED, true))
 	stage.add_child(sv)
 	_content.add_child(stage)
 
@@ -1445,7 +1445,16 @@ func _after_login() -> void:
 	var sv: Variant = info.get("save")
 	var err := ""
 	if sv == null:
-		game.new_game()
+		# облако пустое: если на устройстве остался прогресс — предлагаем его загрузить
+		var local := VCGame.new()
+		var has_local := local.load_game() and _has_progress(local)
+		var pick := 2
+		if has_local:
+			pick = await _ask_local_cloud(int(local.s.get("clicks", 0)), local.total_money())
+		if pick == 1:
+			game.s = local.s
+		else:
+			game.new_game()
 		_cloud_rev = 0
 		var r := await _push_cloud(true)
 		if not bool(r.get("ok", false)):
@@ -1482,7 +1491,7 @@ func _begin_play() -> void:
 	_update_header()
 	if _content != null:
 		_rebuild()
-	if off > 60.0:
+	if off > 60.0 and game.per_sec() > 0.0:
 		_toast("⏳ Оффлайн: +%s монет за %d мин" % [VCGame.fmt(game.per_sec() * off), int(off / 60.0)])
 	if net != null and net.authed:
 		_toast("👤 " + net.user_name + " · облако подключено")
@@ -1627,6 +1636,51 @@ func _on_link_changed(ok: bool, text: String) -> void:
 	if now - _link_err_at > 30000.0:
 		_link_err_at = now
 		_toast("⚠️ " + text)
+
+func _has_progress(g: VCGame) -> bool:
+	return int(g.s.get("clicks", 0)) > 0 or g.total_money() > 0.0 or not (g.s["upgrades"] as Dictionary).is_empty()
+
+## Выбор при пустом облаке: 1 — загрузить локальный прогресс, 2 — начать заново.
+func _ask_local_cloud(clicks: int, money: float) -> int:
+	var layer := ColorRect.new()
+	layer.color = Color(0, 0, 0, 0.72)
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(380, 0)
+	var sb := _sbox(CARD, Color(GOLD, 0.4), 1, 20, true)
+	sb.set_content_margin_all(18)
+	card.add_theme_stylebox_override("panel", sb)
+	center.add_child(card)
+	var v := _vbox(10)
+	v.add_child(_label("☁️ В облаке пока пусто", 17, GOLD))
+	v.add_child(_label("На этом устройстве есть прогресс: %d кликов и 🪙 %s.\n\nЗагрузить его в аккаунт? Если выбрать «Начать заново», локальный кэш заменится новой игрой." % [clicks, VCGame.fmt(money)], 12, TEXT, true))
+	var row := _row(8)
+	var pick := [-1]
+	var b1 := _button("Загрузить прогресс", 12, GOLD)
+	b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b1.custom_minimum_size = Vector2(0, 42)
+	b1.pressed.connect(func() -> void:
+		pick[0] = 1
+		layer.queue_free()
+	)
+	var b2 := _button("Начать заново", 12, MUTED)
+	b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b2.custom_minimum_size = Vector2(0, 42)
+	b2.pressed.connect(func() -> void:
+		pick[0] = 2
+		layer.queue_free()
+	)
+	row.add_child(b1)
+	row.add_child(b2)
+	v.add_child(row)
+	card.add_child(v)
+	add_child(layer)
+	while pick[0] == -1 and is_instance_valid(layer):
+		await get_tree().process_frame
+	return int(pick[0])
 
 func _time_str(unix: float) -> String:
 	var t := Time.get_time_dict_from_unix_time(int(unix))
