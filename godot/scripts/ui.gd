@@ -2,30 +2,38 @@ extends Control
 ## Интерфейс Godot-версии: верхняя панель, вкладки и разделы.
 ## Вся логика — в VCGame, здесь только отрисовка и обработка нажатий.
 
-const GOLD := Color("ffc93c")
+const GOLD := Color("ffd75e")
 const GOLD2 := Color("ff9f1c")
-const TEXT := Color("e8ecf3")
-const MUTED := Color("8792a6")
-const BG := Color("0b0e14")
-const CARD := Color("1b2231")
-const CARD2 := Color("151b27")
-const LINE := Color("2b3548")
-const GREEN := Color("3ddc84")
-const RED := Color("ff5c5c")
+const GOLD_SOFT := Color("ffe9a8")
+const TEXT := Color("eef2f9")
+const MUTED := Color("8b96ad")
+const BG := Color("080b14")
+const CARD := Color("161d2d")
+const CARD2 := Color("111726")
+const LINE := Color("2a3550")
+const GREEN := Color("46e08a")
+const RED := Color("ff5d6c")
+const PURPLE := Color("9b7bff")
 
 var game: VCGame
+var _root: VBoxContainer
 var _money_lbl: Label
-var _sub_lbl: Label
+var _rate_lbl: Label
+var _click_lbl: Label
+var _skin_lbl: Label
 var _skin_btn: Button
 var _tab_bar: GridContainer
 var _content: VBoxContainer
+var _scroll: ScrollContainer
 var _toast_box: VBoxContainer
 var _tab := "click"
+var _shown_money := 0.0
 var _refreshers: Array[Callable] = []
 var _tick := 0.0
 var _ui_tick := 0.0
 var _save_tick := 0.0
 var _news_tick := 0.0
+var _side := -1.0
 
 func _ready() -> void:
 	game = VCGame.new()
@@ -39,7 +47,14 @@ func _ready() -> void:
 		game.new_game()
 	_build_theme()
 	_build_ui()
+	_shown_money = game.total_money()
 	_show_tab("click")
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--tab="):
+			_show_tab(a.substr(6))
+	var win := get_window()
+	if win:
+		win.min_size = Vector2i(400, 620)
 
 func _notification(what: int) -> void:
 	if (what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE) and game != null:
@@ -63,48 +78,115 @@ func _process(delta: float) -> void:
 	_news_tick += delta
 	if _news_tick >= 5.0:
 		_news_tick = 0.0
-		for txt in game.news_tick():
-			_toast("📰 " + txt)
+		var fired := game.news_tick()
+		if fired.size() > 2:
+			_toast("📰 Новостей: %d — цены на крипту изменились" % fired.size())
+		else:
+			for txt in fired:
+				_toast("📰 " + txt)
+	_animate_money(delta)
+	_resize_content()
+
+func _animate_money(delta: float) -> void:
+	var target := game.total_money()
+	var diff := target - _shown_money
+	if absf(diff) < 0.5:
+		_shown_money = target
+	else:
+		_shown_money += diff * clampf(delta * 9.0, 0.0, 1.0)
+	if _money_lbl:
+		var txt := "🪙 " + VCGame.fmt(_shown_money)
+		if _money_lbl.text != txt:
+			_money_lbl.text = txt
+
+func _resize_content() -> void:
+	if _root == null:
+		return
+	var side := maxf(12.0, (size.x - 720.0) * 0.5)
+	if absf(side - _side) > 0.5:
+		_side = side
+		_root.offset_left = side
+		_root.offset_right = -side
 
 # ── тема и мелкие помощники ───────────────────────────────────────────────────
 func _build_theme() -> void:
 	var th := Theme.new()
-	th.default_font_size = 14
+	th.default_font_size = 15
 
 	var normal := _sbox(CARD, LINE, 1, 12)
-	var hover := _sbox(CARD.lightened(0.06), GOLD, 1, 12)
-	var pressed := _sbox(CARD.darkened(0.18), GOLD, 1, 12)
-	var focus := _sbox(CARD, GOLD, 1, 12)
-	for st in [["normal", normal], ["hover", hover], ["pressed", pressed], ["focus", focus], ["disabled", _sbox(CARD.darkened(0.1), LINE, 1, 12)]]:
-		th.set_stylebox(st[0], "Button", st[1])
+	var hover := _sbox(CARD.lightened(0.07), Color(GOLD, 0.55), 1, 12)
+	var pressed := _sbox(CARD.darkened(0.2), GOLD, 1, 12)
+	var focus := _sbox(Color(0, 0, 0, 0), GOLD, 1, 12)
+	var disabled := _sbox(CARD2, Color(LINE, 0.55), 1, 12)
+	for pair in [["normal", normal], ["hover", hover], ["pressed", pressed], ["focus", focus], ["disabled", disabled]]:
+		th.set_stylebox(pair[0], "Button", pair[1])
 	th.set_color("font_color", "Button", TEXT)
-	th.set_color("font_hover_color", "Button", GOLD)
+	th.set_color("font_hover_color", "Button", GOLD_SOFT)
 	th.set_color("font_pressed_color", "Button", GOLD)
-	th.set_color("font_disabled_color", "Button", Color(MUTED, 0.6))
+	th.set_color("font_disabled_color", "Button", Color(MUTED, 0.68))
 	th.set_font_size("font_size", "Button", 14)
 
-	var le := _sbox(Color("0e1219"), LINE, 1, 10)
+	var le := _sbox(Color("0b101c"), LINE, 1, 10)
 	le.set_content_margin_all(10)
 	th.set_stylebox("normal", "LineEdit", le)
-	th.set_stylebox("focus", "LineEdit", _sbox(Color("0e1219"), GOLD, 1, 10))
+	th.set_stylebox("focus", "LineEdit", _sbox(Color("0b101c"), GOLD, 1, 10))
 	th.set_color("font_color", "LineEdit", TEXT)
 	th.set_color("font_placeholder_color", "LineEdit", Color(MUTED, 0.7))
 
-	th.set_stylebox("panel", "PanelContainer", _sbox(CARD2, LINE, 1, 14))
+	th.set_stylebox("panel", "PanelContainer", _sbox(CARD, LINE, 1, 18, true))
 
-	var slider_bg := _sbox(Color("0e1219"), LINE, 1, 6)
+	var slider_bg := _sbox(Color("0b101c"), Color(0, 0, 0, 0), 0, 5)
+	slider_bg.set_content_margin_all(0)
 	th.set_stylebox("slider", "HSlider", slider_bg)
-	th.set_stylebox("grabber_area", "HSlider", _sbox(GOLD2, GOLD2, 0, 6))
-	th.set_stylebox("grabber_area_highlight", "HSlider", _sbox(GOLD, GOLD, 0, 6))
+	th.set_stylebox("grabber_area", "HSlider", _sbox(GOLD2, GOLD2, 0, 5))
+	th.set_stylebox("grabber_area_highlight", "HSlider", _sbox(GOLD, GOLD, 0, 5))
+	th.set_icon("grabber", "HSlider", _dot_tex(20, GOLD))
+	th.set_icon("grabber_highlight", "HSlider", _dot_tex(22, GOLD_SOFT))
+	th.set_icon("grabber_disabled", "HSlider", _dot_tex(20, MUTED))
+
+	var track := _sbox(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 4)
+	track.content_margin_left = 3
+	track.content_margin_right = 3
+	th.set_stylebox("scroll", "VScrollBar", track)
+	var grab := _sbox(Color(1, 1, 1, 0.13), Color(0, 0, 0, 0), 0, 4)
+	grab.content_margin_left = 3
+	grab.content_margin_right = 3
+	th.set_stylebox("grabber", "VScrollBar", grab)
+	th.set_stylebox("grabber_highlight", "VScrollBar", _sbox(Color(1, 1, 1, 0.24), Color(0, 0, 0, 0), 0, 4))
+	th.set_stylebox("grabber_pressed", "VScrollBar", _sbox(GOLD, GOLD, 0, 4))
+
+	var bar_bg := _sbox(Color("0b101c"), Color(0, 0, 0, 0), 0, 4)
+	bar_bg.set_content_margin_all(0)
+	var bar_fill := _sbox(GOLD, GOLD, 0, 4)
+	bar_fill.set_content_margin_all(0)
+	th.set_stylebox("background", "ProgressBar", bar_bg)
+	th.set_stylebox("fill", "ProgressBar", bar_fill)
 	theme = th
 
-func _sbox(bg: Color, border: Color, w: int, radius: int) -> StyleBoxFlat:
+func _dot_tex(px: int, color: Color) -> ImageTexture:
+	var img := Image.create(px, px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := (px - 1) * 0.5
+	var r := c - 2.0
+	for y in px:
+		for x in px:
+			var d := Vector2(x - c, y - c).length()
+			var a := clampf(r - d + 0.6, 0.0, 1.0)
+			if a > 0.0:
+				img.set_pixel(x, y, Color(color, a))
+	return ImageTexture.create_from_image(img)
+
+func _sbox(bg: Color, border: Color, w: int, radius: int, shadow := false) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
 	sb.border_color = border
 	sb.set_border_width_all(w)
 	sb.set_corner_radius_all(radius)
-	sb.set_content_margin_all(10)
+	sb.set_content_margin_all(12)
+	if shadow:
+		sb.shadow_color = Color(0, 0, 0, 0.38)
+		sb.shadow_size = 12
+		sb.shadow_offset = Vector2(0, 5)
 	return sb
 
 func _label(text: String, size := 14, color := TEXT, wrap := false) -> Label:
@@ -117,6 +199,12 @@ func _label(text: String, size := 14, color := TEXT, wrap := false) -> Label:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return l
 
+func _glow_label(l: Label, color: Color, size := 2) -> void:
+	l.add_theme_color_override("font_shadow_color", Color(color, 0.45))
+	l.add_theme_constant_override("shadow_offset_x", 0)
+	l.add_theme_constant_override("shadow_offset_y", size)
+	l.add_theme_constant_override("shadow_outline_size", size * 3)
+
 func _button(text: String, size := 14, color := TEXT) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -125,9 +213,18 @@ func _button(text: String, size := 14, color := TEXT) -> Button:
 	b.custom_minimum_size = Vector2(0, 40)
 	return b
 
-func _card() -> PanelContainer:
+func _card(border := LINE, radius := 18) -> PanelContainer:
 	var p := PanelContainer.new()
 	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p.add_theme_stylebox_override("panel", _sbox(CARD, border, 1, radius, true))
+	return p
+
+func _pill(text: String, color := TEXT) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := _sbox(Color(color, 0.10), Color(color, 0.26), 1, 9)
+	sb.set_content_margin_all(5)
+	p.add_theme_stylebox_override("panel", sb)
+	p.add_child(_label(text, 10.5, color))
 	return p
 
 func _row(sep := 8) -> HBoxContainer:
@@ -148,16 +245,27 @@ func _spacer() -> Control:
 	return c
 
 func _toast(text: String) -> void:
-	var l := _label(text, 13, TEXT, true)
+	if _toast_box == null:
+		return
+	while _toast_box.get_child_count() >= 2:
+		var old := _toast_box.get_child(0)
+		_toast_box.remove_child(old)
+		old.queue_free()
+	var l := _label(text, 12.5, TEXT, true)
 	var p := PanelContainer.new()
-	var sb := _sbox(Color(0.13, 0.15, 0.2, 0.97), GOLD, 1, 10)
+	var sb := _sbox(Color(0.07, 0.09, 0.15, 0.98), Color(GOLD, 0.5), 1, 12, true)
+	sb.border_width_left = 3
+	sb.border_color = GOLD
+	sb.set_content_margin_all(10)
 	p.add_theme_stylebox_override("panel", sb)
 	p.add_child(l)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.modulate.a = 0.0
 	_toast_box.add_child(p)
 	var tw := create_tween()
-	tw.tween_interval(2.6)
-	tw.tween_property(p, "modulate:a", 0.0, 0.35)
+	tw.tween_property(p, "modulate:a", 1.0, 0.16)
+	tw.tween_interval(2.4)
+	tw.tween_property(p, "modulate:a", 0.0, 0.4)
 	tw.tween_callback(p.queue_free)
 
 func _toast_deferred(text: String) -> void:
@@ -165,43 +273,73 @@ func _toast_deferred(text: String) -> void:
 
 # ── каркас ────────────────────────────────────────────────────────────────────
 func _build_ui() -> void:
-	var bg := ColorRect.new()
-	bg.color = BG
+	# фон: глубокий градиент + живые монетки и свечения
+	var bg := TextureRect.new()
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.55, 1.0])
+	grad.colors = PackedColorArray([Color("06080f"), Color("0b1120"), Color("141c33")])
+	var gt := GradientTexture2D.new()
+	gt.gradient = grad
+	gt.fill_from = Vector2(0, 0)
+	gt.fill_to = Vector2(0, 1)
+	gt.width = 8
+	gt.height = 256
+	bg.texture = gt
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	var root := VBoxContainer.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.offset_left = 14
-	root.offset_right = -14
-	root.offset_top = 12
-	root.offset_bottom = -10
-	root.add_theme_constant_override("separation", 10)
-	add_child(root)
+	add_child(VCFX.new())
 
-	# верхняя панель
-	var top := _card()
-	var tv := _vbox(4)
-	_money_lbl = _label("🪙 0", 30, GOLD)
+	_root = VBoxContainer.new()
+	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.offset_left = 14
+	_root.offset_right = -14
+	_root.offset_top = 12
+	_root.offset_bottom = -10
+	_root.add_theme_constant_override("separation", 10)
+	add_child(_root)
+
+	# шапка: баланс + три показателя
+	var top := _card(Color(GOLD, 0.20), 20)
+	var tv := _vbox(10)
+	var cap := _label("ТВОЙ БАЛАНС", 10, MUTED)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_money_lbl = _label("🪙 0", 38, GOLD)
 	_money_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_sub_lbl = _label("0/сек · 1/клик", 12, MUTED)
-	_sub_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_sub_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_sub_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_glow_label(_money_lbl, GOLD2, 3)
+	var stats := _row(8)
+	stats.add_child(_stat_pill("в секунду", GREEN))
+	stats.add_child(_stat_pill("за клик", GOLD))
+	var skin_pill := _stat_pill("скин", PURPLE)
+	stats.add_child(skin_pill)
+	_skin_val_lbl = _skin_pill_value
+	tv.add_child(cap)
 	tv.add_child(_money_lbl)
-	tv.add_child(_sub_lbl)
+	tv.add_child(stats)
 	top.add_child(tv)
-	root.add_child(top)
+	_root.add_child(top)
 
-	# кнопка клика
-	_skin_btn = _button("🪙 КЛИК", 24, GOLD)
-	_skin_btn.custom_minimum_size = Vector2(0, 92)
-	_skin_btn.add_theme_stylebox_override("normal", _sbox(CARD, GOLD, 2, 18))
-	_skin_btn.add_theme_stylebox_override("hover", _sbox(CARD.lightened(0.07), GOLD, 2, 18))
-	_skin_btn.add_theme_stylebox_override("pressed", _sbox(CARD.darkened(0.15), GOLD, 2, 18))
+	# большая кнопка клика
+	_skin_btn = _button("", 24, GOLD)
+	_skin_btn.custom_minimum_size = Vector2(0, 104)
+	var bn := _sbox(Color("1a2234"), Color(GOLD, 0.75), 2, 20, true)
+	bn.shadow_color = Color(GOLD2, 0.18)
+	bn.shadow_size = 20
+	bn.shadow_offset = Vector2(0, 8)
+	var bh := _sbox(Color("1f2a42"), Color(GOLD, 0.95), 2, 20, true)
+	bh.shadow_color = Color(GOLD2, 0.30)
+	bh.shadow_size = 24
+	bh.shadow_offset = Vector2(0, 8)
+	var bp := _sbox(Color("121a2a"), Color(GOLD, 0.55), 2, 20)
+	_skin_btn.add_theme_stylebox_override("normal", bn)
+	_skin_btn.add_theme_stylebox_override("hover", bh)
+	_skin_btn.add_theme_stylebox_override("pressed", bp)
 	_skin_btn.pressed.connect(_on_click)
-	root.add_child(_skin_btn)
+	_skin_btn.resized.connect(func() -> void: _skin_btn.pivot_offset = _skin_btn.size * 0.5)
+	_root.add_child(_skin_btn)
 
 	# вкладки: сетка 3×2 — на узком экране в один ряд не влезают
 	_tab_bar = GridContainer.new()
@@ -209,60 +347,122 @@ func _build_ui() -> void:
 	_tab_bar.add_theme_constant_override("h_separation", 6)
 	_tab_bar.add_theme_constant_override("v_separation", 6)
 	_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(_tab_bar)
-	for t in [["click", "🖱️ Клик"], ["up", "⬆️ Апгрейды"], ["skins", "🎭 Скины"],
+	_root.add_child(_tab_bar)
+	for t in [["click", "👆 Клик"], ["up", "📈 Апгрейды"], ["skins", "🎨 Скины"],
 			["casino", "🎰 Казино"], ["crypto", "💎 Крипта"], ["more", "📦 Ещё"]]:
 		var b := _button(String(t[1]), 12)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.custom_minimum_size = Vector2(0, 40)
+		b.custom_minimum_size = Vector2(0, 42)
 		b.pressed.connect(_show_tab.bind(String(t[0])))
 		_tab_bar.add_child(b)
 
 	# контент
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root.add_child(scroll)
+	_scroll = ScrollContainer.new()
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.follow_focus = true
+	_root.add_child(_scroll)
 
-	_content = _vbox(10)
+	_content = _vbox(12)
 	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_content)
+	_scroll.add_child(_content)
 
 	# тосты поверх
 	_toast_box = VBoxContainer.new()
 	_toast_box.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	_toast_box.offset_left = 16
-	_toast_box.offset_right = -16
-	_toast_box.offset_top = -120
+	_toast_box.offset_left = 18
+	_toast_box.offset_right = -18
+	_toast_box.offset_top = -160
 	_toast_box.offset_bottom = -16
 	_toast_box.alignment = BoxContainer.ALIGNMENT_END
 	_toast_box.add_theme_constant_override("separation", 6)
 	_toast_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_toast_box)
 
+var _stat_vals: Array[Label] = []
+var _skin_pill_value: Label
+var _skin_val_lbl: Label
+
+func _stat_pill(caption: String, color: Color) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := _sbox(Color(color, 0.07), Color(color, 0.20), 1, 12)
+	sb.set_content_margin_all(8)
+	p.add_theme_stylebox_override("panel", sb)
+	var v := _vbox(1)
+	var val := _label("0", 15, color)
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	val.clip_text = true
+	var cap := _label(caption, 10, MUTED)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(val)
+	v.add_child(cap)
+	p.add_child(v)
+	_stat_vals.append(val)
+	_skin_pill_value = val
+	return p
+
 func _update_header() -> void:
-	_money_lbl.text = "🪙 " + VCGame.fmt(game.total_money())
 	var sk := game.skin_by_id(int(game.s["skin"]))
 	var nm := String(sk.get("name", "Виталя 69"))
-	_sub_lbl.text = "%s/сек · %s/клик · скин: %s" % [
-		VCGame.fmt(game.per_sec()), VCGame.fmt(game.per_click()), nm]
-	if sk.has("src") and String(sk["src"]) != "":
-		_skin_btn.text = "🪙 КЛИК\n" + nm
-	else:
-		_skin_btn.text = "🪙 КЛИК"
+	if _stat_vals.size() >= 2:
+		_stat_vals[0].text = VCGame.fmt(game.per_sec())
+		_stat_vals[1].text = VCGame.fmt(game.per_click())
+	if _skin_val_lbl:
+		_skin_val_lbl.text = nm
+		_skin_val_lbl.add_theme_font_size_override("font_size", 12 if nm.length() > 11 else 14)
+	if _skin_btn:
+		_skin_btn.text = "🪙  КЛИК\n+" + VCGame.fmt(game.per_click()) + " за клик"
 
 func _on_click() -> void:
 	game.click()
 	_update_header()
+	_spawn_click_fx()
+	if _skin_btn:
+		_skin_btn.pivot_offset = _skin_btn.size * 0.5
+		_skin_btn.scale = Vector2(0.975, 0.975)
+		var tw := create_tween()
+		tw.tween_property(_skin_btn, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _spawn_click_fx() -> void:
+	if _skin_btn == null:
+		return
+	var l := _label("+" + VCGame.fmt(game.per_click()), 20, GOLD)
+	l.add_theme_color_override("font_shadow_color", Color(GOLD2, 0.55))
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.z_index = 20
+	var p0 := _skin_btn.global_position - global_position
+	var origin := p0 + Vector2(randf_range(40.0, maxf(60.0, _skin_btn.size.x - 90.0)), 16.0)
+	l.position = origin
+	add_child(l)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", origin.y - 84.0, 0.9).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.5).set_delay(0.45)
+	tw.chain().tween_callback(l.queue_free)
 
 func _show_tab(tab: String) -> void:
 	_tab = tab
 	var i := 0
 	for b in _tab_bar.get_children():
 		var active := i == _tab_index(tab)
-		var sb := _sbox(GOLD if active else CARD, GOLD if active else LINE, 1, 12)
-		b.add_theme_stylebox_override("normal", sb)
-		b.add_theme_color_override("font_color", GOLD if active else MUTED)
+		if active:
+			var sb := _sbox(GOLD, GOLD_SOFT, 1, 12, true)
+			sb.shadow_color = Color(GOLD2, 0.28)
+			sb.shadow_size = 10
+			sb.shadow_offset = Vector2(0, 3)
+			b.add_theme_stylebox_override("normal", sb)
+			b.add_theme_stylebox_override("hover", sb)
+			for c in ["font_color", "font_hover_color", "font_focus_color", "font_pressed_color"]:
+				b.add_theme_color_override(c, Color("221704"))
+		else:
+			var sb2 := _sbox(Color(CARD, 0.75), LINE, 1, 12)
+			b.add_theme_stylebox_override("normal", sb2)
+			b.add_theme_stylebox_override("hover", _sbox(CARD.lightened(0.06), Color(GOLD, 0.4), 1, 12))
+			for c in ["font_color", "font_focus_color", "font_pressed_color"]:
+				b.add_theme_color_override(c, MUTED)
+			b.add_theme_color_override("font_hover_color", GOLD_SOFT)
 		i += 1
 	_rebuild()
 
@@ -281,41 +481,75 @@ func _rebuild() -> void:
 		"crypto": _build_crypto()
 		"more": _build_more()
 	_update_header()
+	if _scroll:
+		_scroll.set_deferred("scroll_vertical", 0)
 
 # ── КЛИК ──────────────────────────────────────────────────────────────────────
 func _build_click() -> void:
-	var c := _card()
-	var v := _vbox(8)
-	v.add_child(_label("ТВОЙ СКИН", 12, MUTED))
 	var sk := game.skin_by_id(int(game.s["skin"]))
-	var h := _row(12)
-	var img := _skin_image(sk, 96)
-	h.add_child(img)
-	var info := _vbox(4)
-	info.add_child(_label(String(sk.get("name", "Виталя 69")), 18, GOLD))
+	var nm := String(sk.get("name", "Виталя 69"))
 	var mult := float(sk.get("mult", 1.0))
-	info.add_child(_label("Множитель ×%s" % VCGame.fmt_mult(mult), 13, TEXT))
+	var c := _card(Color(GOLD, 0.18), 20)
+	var v := _vbox(12)
+
+	var h := _row(14)
+	var holder := PanelContainer.new()
+	var hs := _sbox(CARD2, Color(GOLD, 0.25), 1, 16)
+	hs.set_content_margin_all(3)
+	holder.add_theme_stylebox_override("panel", hs)
+	holder.add_child(_skin_image(sk, 100))
+	h.add_child(holder)
+
+	var info := _vbox(6)
+	var name_l := _label(nm, 20, GOLD, true)
+	_glow_label(name_l, GOLD2, 1)
+	info.add_child(name_l)
+	var chips := _row(6)
+	chips.add_child(_pill("×%s к доходу" % VCGame.fmt_mult(mult), GOLD))
+	var lk := game.luck()
+	if lk > 0.0:
+		chips.add_child(_pill("+%s%% удача" % str(roundi(lk * 100.0)), GREEN))
+	chips.add_child(_spacer())
+	info.add_child(chips)
 	if sk.has("note"):
-		info.add_child(_label(String(sk["note"]), 12, MUTED, true))
+		info.add_child(_label(String(sk["note"]), 11.5, MUTED, true))
 	h.add_child(info)
 	v.add_child(h)
 
-	var stats := _vbox(4)
-	stats.add_child(_label("Кликов: %d" % int(game.s["clicks"]), 13, TEXT))
-	stats.add_child(_label("Всего монет: 🪙 %s" % VCGame.fmt(game.total_money()), 13, TEXT))
-	stats.add_child(_label("В секунду: %s · за клик: %s" % [VCGame.fmt(game.per_sec()), VCGame.fmt(game.per_click())], 13, MUTED))
-	v.add_child(stats)
+	var st := _row(8)
+	st.add_child(_mini_stat("КЛИКОВ", str(int(game.s["clicks"]))))
+	st.add_child(_mini_stat("ВСЕГО МОНЕТ", VCGame.fmt(game.total_money())))
+	st.add_child(_mini_stat("В СЕКУНДУ", VCGame.fmt(game.per_sec())))
+	v.add_child(st)
+
 	c.add_child(v)
 	_content.add_child(c)
 
 	var tip := _panel_text("Жми большую кнопку сверху. Апгрейды увеличивают доход, скины — множитель и удачу. Прогресс сохраняется сам.")
 	_content.add_child(tip)
-	var stage := _card()
+	var stage := _card(Color(PURPLE, 0.20), 16)
 	var sv := _vbox(4)
-	sv.add_child(_label("ПОРТ НА GODOT · ЭТАП 1", 12, GOLD))
-	sv.add_child(_label("Готова оффлайн-игра: клик, апгрейды, скины и крафт, казино, крипта, майнинг, кредиты, новости, достижения, автосохранение и оффлайн-доход. Облако, аккаунты, чат, карты и сад — следующие этапы.", 11, MUTED, true))
+	sv.add_child(_label("ПОРТ НА GODOT · ЭТАП 1", 11, PURPLE))
+	sv.add_child(_label("Оффлайн-игра: клик, апгрейды, скины и крафт, казино, крипта, майнинг, кредиты, новости, достижения, автосохранение и оффлайн-доход. Облако, аккаунты, чат, карты и сад — следующие этапы.", 11, MUTED, true))
 	stage.add_child(sv)
 	_content.add_child(stage)
+
+func _mini_stat(caption: String, value: String) -> PanelContainer:
+	var p := PanelContainer.new()
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := _sbox(Color(1, 1, 1, 0.035), Color(1, 1, 1, 0.07), 1, 12)
+	sb.set_content_margin_all(8)
+	p.add_theme_stylebox_override("panel", sb)
+	var v := _vbox(0)
+	var val := _label(value, 14, TEXT)
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	val.clip_text = true
+	var cap := _label(caption, 9, MUTED)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(val)
+	v.add_child(cap)
+	p.add_child(v)
+	return p
 
 func _panel_text(text: String) -> PanelContainer:
 	var p := _card()
@@ -359,21 +593,25 @@ func _build_upgrades() -> void:
 	for u in VCData.IDLE + VCData.CLICK:
 		var id := String(u["id"])
 		var card := _card()
+		var v := _vbox(7)
 		var h := _row(10)
-		var ic := _label(String(u.get("icon", "⭐")), 24, TEXT)
-		ic.custom_minimum_size = Vector2(34, 0)
-		h.add_child(ic)
+		var badge := PanelContainer.new()
+		var bs := _sbox(Color(GOLD, 0.10), Color(GOLD, 0.22), 1, 12)
+		bs.set_content_margin_all(8)
+		badge.add_theme_stylebox_override("panel", bs)
+		badge.add_child(_label(String(u.get("icon", "⭐")), 22, TEXT))
+		h.add_child(badge)
 		var mid := _vbox(2)
-		var title := _label(String(u["name"]), 14, TEXT)
-		mid.add_child(title)
-		mid.add_child(_label(String(u.get("desc", "")), 11.5, MUTED))
+		mid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mid.add_child(_label(String(u["name"]), 14, TEXT, true))
+		mid.add_child(_label(String(u.get("desc", "")), 11, MUTED, true))
 		h.add_child(mid)
-		h.add_child(_spacer())
-		var right := _vbox(4)
-		var lvl := _label("ур. %d" % game.level(id), 12, GOLD)
+		var right := _vbox(3)
+		var lvl := _label("ур. %d" % game.level(id), 11, MUTED)
 		lvl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		var cost := upgrade_cost_now(u)
-		var buy := _button(_cost_text(cost), 12)
+		var buy := _button(_cost_text(cost), 12, GOLD)
+		buy.custom_minimum_size = Vector2(92, 36)
 		if id == "starost" and game.level(id) > 0:
 			buy.text = "Куплено"
 			buy.disabled = true
@@ -381,13 +619,28 @@ func _build_upgrades() -> void:
 		right.add_child(lvl)
 		right.add_child(buy)
 		h.add_child(right)
-		card.add_child(h)
+		v.add_child(h)
+
+		var bar := ProgressBar.new()
+		bar.max_value = 100.0
+		bar.value = 0.0
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(0, 5)
+		bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_child(bar)
+
+		card.add_child(v)
 		_content.add_child(card)
 		_refreshers.append(func():
 			lvl.text = "ур. %d" % game.level(id)
-			if not buy.disabled:
-				buy.text = _cost_text(upgrade_cost_now(u))
-				buy.modulate.a = 1.0 if game.total_money() >= upgrade_cost_now(u) else 0.6
+			if buy.disabled:
+				bar.value = 100.0
+				return
+			var c2 := upgrade_cost_now(u)
+			buy.text = _cost_text(c2)
+			var can := game.total_money() >= c2
+			buy.add_theme_color_override("font_color", GOLD if can else Color(MUTED, 0.8))
+			bar.value = clampf(game.total_money() / maxf(c2, 1.0) * 100.0, 0.0, 100.0)
 		)
 
 func upgrade_cost_now(u: Dictionary) -> float:
@@ -411,7 +664,15 @@ func _up_name(id: String) -> String:
 
 # ── СКИНЫ ─────────────────────────────────────────────────────────────────────
 func _build_skins() -> void:
-	_content.add_child(_label("СКИНЫ", 13, GOLD))
+	var head := _row()
+	head.add_child(_label("СКИНЫ", 13, GOLD))
+	head.add_child(_spacer())
+	var uniq := 0
+	for sk in VCData.SKINS:
+		if game.owns_skin(int(sk["id"])):
+			uniq += 1
+	head.add_child(_pill("%d / %d" % [uniq, VCData.SKINS.size()], GOLD))
+	_content.add_child(head)
 	var grid := HFlowContainer.new()
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
@@ -426,12 +687,16 @@ func _build_skins() -> void:
 	h2.add_child(_label("10 одинаковых → 1 другой", 11, MUTED))
 	_content.add_child(h2)
 	for r in VCData.RECIPES:
-		var card := _card()
+		var card := _card(Color(GOLD, 0.12), 14)
 		var h := _row(8)
 		var have := _recipe_have(r)
-		h.add_child(_label("%d× %s → %s" % [int(r["count"]), _skin_name(int(r["need"])), _skin_name(int(r["give"]))], 12.5, TEXT))
-		h.add_child(_spacer())
-		var b := _button("Скрафтить", 12)
+		var lv := _vbox(2)
+		lv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lv.add_child(_label("%d× %s → %s" % [int(r["count"]), _skin_name(int(r["need"])), _skin_name(int(r["give"]))], 12.5, TEXT, true))
+		lv.add_child(_label("доступно: %d" % have, 10.5, MUTED))
+		h.add_child(lv)
+		var b := _button("Скрафтить", 12, GOLD if have > 0 else MUTED)
+		b.custom_minimum_size = Vector2(96, 36)
 		b.disabled = have < 1
 		b.pressed.connect(_on_craft.bind(r))
 		h.add_child(b)
@@ -447,24 +712,54 @@ func _recipe_have(r: Dictionary) -> int:
 
 func _skin_card(sk: Dictionary) -> Control:
 	var id := int(sk["id"])
-	var card := _card()
-	card.custom_minimum_size = Vector2(128, 0)
-	var v := _vbox(4)
-	v.add_child(_skin_image(sk, 104))
-	var name := _label(String(sk["name"]), 12, TEXT)
-	name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(name)
-	v.add_child(_label("×%s" % VCGame.fmt_mult(float(sk.get("mult", 1.0))), 11, MUTED))
-	if sk.has("note"):
-		var note := _label(String(sk["note"]), 10, MUTED, true)
-		v.add_child(note)
 	var owned := game.owns_skin(id)
 	var selected := int(game.s["skin"]) == id
+	var mult := float(sk.get("mult", 1.0))
+	var ring := LINE
+	if selected:
+		ring = GOLD
+	elif mult >= 6.0:
+		ring = Color(GOLD, 0.5)
+	elif mult >= 3.0:
+		ring = Color(PURPLE, 0.5)
+
+	var card := _card(ring, 16)
+	if selected:
+		var sb := _sbox(CARD, GOLD, 2, 16, true)
+		sb.shadow_color = Color(GOLD2, 0.30)
+		sb.shadow_size = 16
+		sb.shadow_offset = Vector2(0, 4)
+		card.add_theme_stylebox_override("panel", sb)
+	card.custom_minimum_size = Vector2(100, 0)
+	var v := _vbox(5)
+	var holder := PanelContainer.new()
+	var hs := _sbox(CARD2, Color(0, 0, 0, 0), 0, 12)
+	hs.set_content_margin_all(2)
+	holder.add_theme_stylebox_override("panel", hs)
+	holder.add_child(_skin_image(sk, 96))
+	v.add_child(holder)
+
+	var name := _label(String(sk["name"]), 12, TEXT, true)
+	v.add_child(name)
+	var chips := _row(4)
+	chips.add_child(_pill("×%s" % VCGame.fmt_mult(mult), GOLD if mult >= 3.0 else MUTED))
+	if selected:
+		chips.add_child(_pill("✓ выбран", GREEN))
+	elif owned:
+		chips.add_child(_pill("есть", GREEN))
+	chips.add_child(_spacer())
+	v.add_child(chips)
+	if sk.has("note"):
+		v.add_child(_label(String(sk["note"]), 9.5, MUTED, true))
+
 	var btn := _button("Выбран" if selected else ("Выбрать" if owned else _skin_price_text(sk)), 11)
+	btn.custom_minimum_size = Vector2(0, 34)
 	btn.disabled = selected
 	if not owned:
 		var price := float(sk.get("price", -1.0))
 		btn.disabled = price < 0.0 or game.total_money() < price
+		if not btn.disabled:
+			btn.add_theme_color_override("font_color", GOLD)
 		btn.pressed.connect(_on_buy_skin.bind(id))
 	else:
 		btn.pressed.connect(_on_select_skin.bind(id))
@@ -505,10 +800,15 @@ var _bet_input: LineEdit
 var _mult_slider: HSlider
 var _mult_lbl: Label
 var _chance_lbl: Label
+var _drums: Array[Label] = []
+var _spin_btn: Button
+var _spinning := false
+const REEL := ["🍒", "🍋", "🔔", "💎", "7️⃣", "⭐", "🍀", "🪙"]
 var _result_lbl: Label
 var _spins_lbl: Label
 
 func _build_casino() -> void:
+	_spinning = false
 	if not bool(game.s["propusk"]):
 		var card := _card()
 		var v := _vbox(8)
@@ -522,10 +822,29 @@ func _build_casino() -> void:
 		_content.add_child(card)
 		return
 
-	var top := _card()
-	var tv := _vbox(8)
-	_spins_lbl = _label("", 12, MUTED)
+	var top := _card(Color(GOLD, 0.15), 20)
+	var tv := _vbox(10)
+	_spins_lbl = _label("", 11, MUTED)
+	_spins_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tv.add_child(_spins_lbl)
+
+	_drums.clear()
+	var reels := _row(8)
+	for i in 3:
+		var cell := PanelContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.custom_minimum_size = Vector2(0, 84)
+		var cs := _sbox(Color("0b101c"), Color(GOLD, 0.28), 1, 14, true)
+		cs.set_content_margin_all(6)
+		cell.add_theme_stylebox_override("panel", cs)
+		var d := _label(REEL.pick_random(), 40, TEXT)
+		d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		d.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		cell.add_child(d)
+		_drums.append(d)
+		reels.add_child(cell)
+	tv.add_child(reels)
+
 	var bet_row := _row(8)
 	bet_row.add_child(_label("Ставка", 13, TEXT))
 	_bet_input = LineEdit.new()
@@ -537,7 +856,7 @@ func _build_casino() -> void:
 
 	var mrow := _row(8)
 	mrow.add_child(_label("Множитель", 13, TEXT))
-	_mult_lbl = _label("x1.5", 14, GOLD)
+	_mult_lbl = _label("x1.5", 16, GOLD)
 	mrow.add_child(_spacer())
 	mrow.add_child(_mult_lbl)
 	tv.add_child(mrow)
@@ -550,13 +869,19 @@ func _build_casino() -> void:
 	_mult_slider.value_changed.connect(_on_mult_changed)
 	tv.add_child(_mult_slider)
 	_chance_lbl = _label("", 12, MUTED)
+	_chance_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tv.add_child(_chance_lbl)
 
-	var spin := _button("🎰 КРУТИТЬ", 20, GOLD)
-	spin.custom_minimum_size = Vector2(0, 62)
-	spin.add_theme_stylebox_override("normal", _sbox(CARD, GOLD, 2, 16))
-	spin.pressed.connect(_on_spin)
-	tv.add_child(spin)
+	_spin_btn = _button("🎰  КРУТИТЬ", 20, GOLD)
+	_spin_btn.custom_minimum_size = Vector2(0, 60)
+	var sn := _sbox(Color("1a2234"), Color(GOLD, 0.75), 2, 16, true)
+	sn.shadow_color = Color(GOLD2, 0.20)
+	sn.shadow_size = 18
+	sn.shadow_offset = Vector2(0, 6)
+	_spin_btn.add_theme_stylebox_override("normal", sn)
+	_spin_btn.add_theme_stylebox_override("hover", _sbox(Color("202b45"), GOLD, 2, 16, true))
+	_spin_btn.pressed.connect(_on_spin)
+	tv.add_child(_spin_btn)
 	_result_lbl = _label("", 16, TEXT)
 	_result_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tv.add_child(_result_lbl)
@@ -606,6 +931,8 @@ func _on_buy_vip() -> void:
 	_rebuild()
 
 func _on_spin() -> void:
+	if _spinning:
+		return
 	var bet := 0.0
 	if _bet_input != null:
 		bet = float(_bet_input.text)
@@ -613,13 +940,52 @@ func _on_spin() -> void:
 	if not bool(r.get("ok", false)):
 		_toast("❌ " + String(r.get("err", "Ошибка")))
 		return
+	_spinning = true
+	if _spin_btn:
+		_spin_btn.disabled = true
+		_spin_btn.text = "крутится…"
+	if _result_lbl:
+		_result_lbl.text = ""
+		_result_lbl.modulate = Color.WHITE
+
+	var final: Array = []
 	if bool(r["win"]):
-		_result_lbl.text = "🎉 ВЫИГРЫШ ×%s  +%s 🪙" % [VCGame.fmt_mult(float(r["mult"])), VCGame.fmt(float(r["amount"]) - float(r["bet"]))]
-		_result_lbl.add_theme_color_override("font_color", GREEN)
+		var w: String = String(REEL.pick_random())
+		final = [w, w, w]
 	else:
-		_result_lbl.text = "💀 ПРОИГРЫШ  −%s 🪙" % VCGame.fmt(float(r["bet"]))
+		var pool: Array = REEL.duplicate()
+		pool.shuffle()
+		final = [pool[0], pool[1], pool[2]]
+
+	for i in 22:
+		if _drums.is_empty() or not is_instance_valid(_drums[0]):
+			_spinning = false
+			return
+		for d in _drums:
+			d.text = String(REEL.pick_random())
+		await get_tree().create_timer(0.035 + float(i) * 0.003).timeout
+	for i in 3:
+		if i < _drums.size() and is_instance_valid(_drums[i]):
+			_drums[i].text = String(final[i])
+		await get_tree().create_timer(0.08).timeout
+
+	_spinning = false
+	if _spin_btn and is_instance_valid(_spin_btn):
+		_spin_btn.disabled = false
+		_spin_btn.text = "🎰  КРУТИТЬ"
+	if _result_lbl == null or not is_instance_valid(_result_lbl):
+		return
+	if bool(r["win"]):
+		_result_lbl.text = "🎉 ВЫИГРЫШ ×%s   +%s 🪙" % [VCGame.fmt_mult(float(r["mult"])), VCGame.fmt(float(r["amount"]) - float(r["bet"]))]
+		_result_lbl.add_theme_color_override("font_color", GREEN)
+		_result_lbl.modulate = Color(1.5, 1.5, 1.5)
+		var tw := create_tween()
+		tw.tween_property(_result_lbl, "modulate", Color.WHITE, 0.55)
+	else:
+		_result_lbl.text = "💀 ПРОИГРЫШ   −%s 🪙" % VCGame.fmt(float(r["bet"]))
 		_result_lbl.add_theme_color_override("font_color", RED)
-	_mult_slider.value = float(game.s["casino"]["multiplier"])
+	if _mult_slider:
+		_mult_slider.value = float(game.s["casino"]["multiplier"])
 	_refresh_casino()
 	_update_header()
 

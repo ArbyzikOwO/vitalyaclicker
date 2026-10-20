@@ -19,10 +19,14 @@ config/icon="res://icon.svg"
 
 window/size/viewport_width=480
 window/size/viewport_height=800
+window/size/window_width_override=540
+window/size/window_height_override=900
+window/size/resizable=true
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.043, 0.055, 0.078, 1)
+environment/defaults/default_clear_color=Color(0.031, 0.043, 0.078, 1)

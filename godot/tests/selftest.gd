@@ -59,14 +59,15 @@ func _on_frame() -> void:
 		print("  %s   вкладка %-7s детей: %d" % ["ok  " if n > 0 else "FAIL", tab, n])
 		return
 	if idx == _tabs.size():
-		# казино: крутим через UI-обработчик
+		# казино: крутим через UI-обработчик (анимация ~1.5 с)
 		_ui._show_tab("casino")
 		_ui._bet_input.text = "100"
 		var before: float = _ui.game.total_money()
 		_ui._on_spin()
+		await create_timer(2.6).timeout
 		var after: float = _ui.game.total_money()
 		ok("UI: прокрутка меняет баланс", after != before, "%.2f → %.2f" % [before, after])
-		ok("UI: результат показан", _ui._result_lbl.text != "")
+		ok("UI: результат показан", _ui._result_lbl.text != "", _ui._result_lbl.text)
 		# кредит: раннее погашение через UI
 		_ui._show_tab("more")
 		var owed: float = _ui.game.loan_owed(_ui.game.s["loans"][0])
@@ -74,7 +75,12 @@ func _on_frame() -> void:
 		if _ui.game.s["loans"].size() > 0:
 			_ui._on_loan_pay(0)
 			ok("UI: кредит погашен", _ui.game.s["loans"].is_empty())
+		_finish()
 		return
+	if idx > _tabs.size():
+		return
+
+func _finish() -> void:
 	print("")
 	if _ui_fail > 0:
 		fails += _ui_fail
