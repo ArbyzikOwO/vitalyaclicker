@@ -14,13 +14,29 @@
 
 ## Как открыть
 
-1. Установить [Godot 4.2+](https://godotengine.org/download) (обычная версия, не .NET).
-2. В менеджере проектов: **Import** → выбрать `godot/project.godot`.
+Godot **4.7.2** уже скачан на этот компьютер:
+`C:\Users\ArbyzikOwO\AppData\Local\Programs\Godot\`
+
+1. Двойной клик по `godot/open-editor.cmd` — откроет этот проект в редакторе
+   (скрипт сам найдёт Godot в `AppData\Local\Programs\Godot` или в `PATH`).
+2. Либо вручную: менеджер проектов → **Import** → выбрать `godot/project.godot`.
 3. Нажать **F5**.
+
+Проверка без окна (то, чем пользуется сборка и я):
+
+```powershell
+$g = "$env:LOCALAPPDATA\Programs\Godot\Godot_v4.7.2-stable_win64_console.exe"
+& $g --headless --path godot --import      # импорт ресурсов
+& $g --headless --path godot --quit-after 180   # прогон сцены без окна
+```
 
 Сцена `scenes/main.tscn` содержит один `Control`; весь интерфейс строится кодом в
 `scripts/main.gd` — так проще переносить экраны по одному и не зависеть от ручной
 сборки сцен.
+
+> Для сборки EXE/APK нужны **Export Templates** (~1 ГБ): редактор → `Editor` →
+> `Manage Export Templates` → `Download and Install`. Без них проект запускается,
+> но экспорт недоступен.
 
 ## План переноса (по этапам)
 
