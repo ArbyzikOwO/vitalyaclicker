@@ -1,8 +1,8 @@
-﻿extends RefCounted
+extends RefCounted
 class_name VCGame
-## РЎРѕСЃС‚РѕСЏРЅРёРµ РёРіСЂС‹ Рё РІСЃСЏ Р»РѕРіРёРєР° (СЌРєРѕРЅРѕРјРёРєР°, РєР°Р·РёРЅРѕ, РєСЂРёРїС‚Р°, РјР°Р№РЅРёРЅРі, РєСЂРµРґРёС‚С‹,
-## РЅРѕРІРѕСЃС‚Рё, РґРѕСЃС‚РёР¶РµРЅРёСЏ, СЃРѕС…СЂР°РЅРµРЅРёРµ). РРЅС‚РµСЂС„РµР№СЃ С‚РѕР»СЊРєРѕ С‡РёС‚Р°РµС‚ СЌС‚Рѕ Рё РІС‹Р·С‹РІР°РµС‚
-## РјРµС‚РѕРґС‹ вЂ” РєР°Рє РІ РІРµР±-РІРµСЂСЃРёРё, РіРґРµ РІСЃРµ СЂР°СЃС‡С‘С‚С‹ СЃРѕР±СЂР°РЅС‹ РІ РѕРґРЅРѕРј РјРµСЃС‚Рµ.
+## Состояние игры и вся логика (экономика, казино, крипта, майнинг, кредиты,
+## новости, достижения, сохранение). Интерфейс только читает это и вызывает
+## методы — как в веб-версии, где все расчёты собраны в одном месте.
 
 var save_path := "user://save_v24.json"
 
@@ -11,7 +11,7 @@ var s: Dictionary = {}
 func _init() -> void:
 	new_game()
 
-# в”Ђв”Ђ СЃРѕСЃС‚РѕСЏРЅРёРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── состояние ─────────────────────────────────────────────────────────────────
 func new_game() -> void:
 	var crypto := {}
 	for k in VCData.CRYPTO["keys"]:
@@ -38,9 +38,10 @@ func new_game() -> void:
 		"news_history": [],
 		"got_lox": false,
 		"last_seen": 0.0,
+		"cloud_extra": {},
 	}
 
-# в”Ђв”Ђ РґРµРЅСЊРіРё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── деньги ────────────────────────────────────────────────────────────────────
 func total_money() -> float:
 	var t := 0.0
 	for v in s["money"].values():
@@ -79,7 +80,7 @@ func spend(amount: float) -> bool:
 		s["money"][k] = max(0.0, float(s["money"][k]))
 	return rem <= 0.0
 
-# в”Ђв”Ђ РґРѕС…РѕРґ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── доход ─────────────────────────────────────────────────────────────────────
 func level(id: String) -> int:
 	return int(s["upgrades"].get(id, 0))
 
@@ -133,7 +134,7 @@ func click() -> void:
 	add_money(per_click(), "click")
 	check_achievements()
 
-# в”Ђв”Ђ СЃРєРёРЅС‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── скины ─────────────────────────────────────────────────────────────────────
 func skin_by_id(id: int) -> Dictionary:
 	for sk in VCData.SKINS:
 		if int(sk["id"]) == id:
@@ -146,17 +147,17 @@ func owns_skin(id: int) -> bool:
 func buy_skin(id: int) -> String:
 	var sk := skin_by_id(id)
 	if sk.is_empty():
-		return "РќРµС‚ С‚Р°РєРѕРіРѕ СЃРєРёРЅР°"
+		return "Нет такого скина"
 	if owns_skin(id) and not bool(sk.get("consumable", false)):
-		return "РЈР¶Рµ РєСѓРїР»РµРЅРѕ"
+		return "Уже куплено"
 	var price := float(sk.get("price", -1.0))
 	if price < 0.0:
-		return "Р­С‚РѕС‚ СЃРєРёРЅ РЅРµ РїСЂРѕРґР°С‘С‚СЃСЏ вЂ” С‚РѕР»СЊРєРѕ РєСЂР°С„С‚ РёР»Рё СЃРѕР±С‹С‚РёРµ"
+		return "Этот скин не продаётся — только крафт или событие"
 	if not spend(price):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	s["owned_skins"].append(id)
 	if id == 107:
-		pass # С„Р»Р°Рі РјР°С„РёРё РЅСѓР¶РµРЅ С‚РѕР»СЊРєРѕ СЃР°РґСѓ (РІРµР±-РІРµСЂСЃРёСЏ)
+		pass # флаг мафии нужен только саду (веб-версия)
 	unlock("mafia" if id == 107 else ("secret" if id == 9 else ""))
 	check_achievements()
 	return ""
@@ -207,7 +208,7 @@ func craft(r: Dictionary, times: int) -> bool:
 	check_achievements()
 	return true
 
-# в”Ђв”Ђ РєР°Р·РёРЅРѕ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── казино ────────────────────────────────────────────────────────────────────
 func win_chance(m: float) -> float:
 	var c: Dictionary = VCData.CASINO
 	var base: float = clampf(float(c["rtp"]) / maxf(m, 0.01), float(c["min_chance"]), float(c["max_chance"]))
@@ -220,12 +221,12 @@ func win_chance(m: float) -> float:
 
 func spin(bet: float) -> Dictionary:
 	if not bool(s["propusk"]):
-		return { "ok": false, "err": "РќСѓР¶РµРЅ РїСЂРѕРїСѓСЃРє РІ Р‘СѓСЂРјР°Р»РґСѓ" }
+		return { "ok": false, "err": "Нужен пропуск в Бурмалду" }
 	bet = floor(bet)
 	if bet <= 0.0:
-		return { "ok": false, "err": "Р’РІРµРґРё СЃС‚Р°РІРєСѓ" }
+		return { "ok": false, "err": "Введи ставку" }
 	if not spend(bet):
-		return { "ok": false, "err": "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚" }
+		return { "ok": false, "err": "Не хватает монет" }
 	var m := float(s["casino"]["multiplier"])
 	var win := randf() < win_chance(m)
 	if win:
@@ -251,9 +252,9 @@ func set_multiplier(m: float) -> void:
 func buy_pass() -> String:
 	var price := float(VCData.CASINO["pass_price"])
 	if bool(s["propusk"]):
-		return "РЈР¶Рµ РєСѓРїР»РµРЅРѕ"
+		return "Уже куплено"
 	if not spend(price):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	s["propusk"] = true
 	unlock("propusk")
 	return ""
@@ -261,37 +262,37 @@ func buy_pass() -> String:
 func buy_vip() -> String:
 	var price := float(VCData.CASINO["vip_price"])
 	if bool(s["vnv_pass"]):
-		return "РЈР¶Рµ РєСѓРїР»РµРЅРѕ"
+		return "Уже куплено"
 	if not spend(price):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	s["vnv_pass"] = true
 	s["casino"]["total_spins"] = 0
 	s["casino"]["multiplier"] = VCData.CASINO["mult_min"]
 	unlock("vnv")
 	return ""
 
-# в”Ђв”Ђ РєСЂРёРїС‚Р° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── крипта ────────────────────────────────────────────────────────────────────
 func crypto_discount() -> float:
 	return float(VCData.BUFFS["news5g_crypto_discount"]) if has_baf("news5g") else 0.0
 
 func crypto_buy(key: String, qty: int, discount := true) -> String:
 	if not s["crypto"].has(key):
-		return "РќРµС‚ С‚Р°РєРѕР№ РІР°Р»СЋС‚С‹"
+		return "Нет такой валюты"
 	qty = max(1, qty)
 	var c: Dictionary = s["crypto"][key]
 	var price := float(c["price"]) * qty * (1.0 - (crypto_discount() if discount else 0.0))
 	if not spend(price):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	c["held"] = float(c["held"]) + qty
 	check_achievements()
 	return ""
 
 func crypto_sell(key: String) -> String:
 	if not s["crypto"].has(key):
-		return "РќРµС‚ С‚Р°РєРѕР№ РІР°Р»СЋС‚С‹"
+		return "Нет такой валюты"
 	var c: Dictionary = s["crypto"][key]
 	if float(c["held"]) <= 0.0:
-		return "РќРµС‡РµРіРѕ РїСЂРѕРґР°РІР°С‚СЊ"
+		return "Нечего продавать"
 	var gained := float(c["held"]) * float(c["price"])
 	c["held"] = 0.0
 	add_money(gained, "crypto")
@@ -312,7 +313,7 @@ func push_price(key: String, price: float) -> void:
 	if hist.size() > 100:
 		hist.pop_front()
 
-# в”Ђв”Ђ РјР°Р№РЅРёРЅРі в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── майнинг ───────────────────────────────────────────────────────────────────
 func mining_mult() -> float:
 	var m := 1.0
 	if owns_skin(106) and owns_skin(3):
@@ -329,11 +330,11 @@ func gpus_total() -> int:
 
 func gpu_buy(t: String) -> String:
 	if not VCData.GPU_TYPES.has(t):
-		return "РќРµС‚ С‚Р°РєРѕР№ РІРёРґРµРѕРєР°СЂС‚С‹"
+		return "Нет такой видеокарты"
 	var info: Dictionary = VCData.GPU_TYPES[t]
 	if not spend(float(info["price"])):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
-	s["mining"]["gpus"].append({ "type": t, "speed": float(info["speed"]), "broken": false })
+		return "Не хватает монет"
+	s["mining"]["gpus"].append({ "type": t, "speed": float(info["speed"]), "broken": false, "installed_at": Time.get_unix_time_from_system() })
 	check_achievements()
 	return ""
 
@@ -343,20 +344,21 @@ func gpu_install_cost(key: String) -> float:
 func gpu_install(farm_i: int, gpu_i: int) -> String:
 	var farms: Array = s["mining"]["farms"]
 	if farm_i < 0 or farm_i >= farms.size():
-		return "РќРµС‚ С‚Р°РєРѕР№ С„РµСЂРјС‹"
+		return "Нет такой фермы"
 	var f: Dictionary = farms[farm_i]
 	if f["gpus"].size() >= int(f["max_gpus"]):
-		return "Р¤РµСЂРјР° РїРѕР»РЅР°"
+		return "Ферма полна"
 	var free: Array = s["mining"]["gpus"]
 	if gpu_i < 0 or gpu_i >= free.size():
-		return "GPU РЅРµ РЅР°Р№РґРµРЅ"
+		return "GPU не найден"
 	var g: Dictionary = free[gpu_i]
 	if bool(g["broken"]):
-		return "Р’РёРґРµРѕРєР°СЂС‚Р° СЃР»РѕРјР°РЅР°"
+		return "Видеокарта сломана"
 	var cost := gpu_install_cost(String(f["crypto"]))
 	if not spend(cost):
-		return "РЈСЃС‚Р°РЅРѕРІРєР° СЃС‚РѕРёС‚ СЃР»РёС€РєРѕРј РґРѕСЂРѕРіРѕ"
+		return "Установка стоит слишком дорого"
 	free.remove_at(gpu_i)
+	g["installed_at"] = Time.get_unix_time_from_system()
 	f["gpus"].append(g)
 	return ""
 
@@ -373,23 +375,23 @@ func gpu_remove(farm_i: int, idx: int) -> void:
 
 func maxim_buy() -> String:
 	if not spend(float(VCData.MINING["maxim_price"])):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	s["mining"]["maxims"] = int(s["mining"]["maxims"]) + 1
 	return ""
 
 func maxim_toggle() -> String:
 	var need := int(ceil(float(gpus_total() - int(s["mining"]["gpus"].size())) / float(VCData.MINING["gpus_per_maxim"])))
 	if not bool(s["mining"]["maxims_enabled"]) and int(s["mining"]["maxims"]) < need:
-		return "РќСѓР¶РЅРѕ РјРёРЅРёРјСѓРј %d РњР°РєСЃРёРјРѕРІ" % need
+		return "Нужно минимум %d Максимов" % need
 	s["mining"]["maxims_enabled"] = not bool(s["mining"]["maxims_enabled"])
 	return ""
 
 func farm_slot_up(i: int) -> String:
 	var farms: Array = s["mining"]["farms"]
 	if i < 0 or i >= farms.size():
-		return "РќРµС‚ С‚Р°РєРѕР№ С„РµСЂРјС‹"
+		return "Нет такой фермы"
 	if not spend(float(VCData.MINING["farm_slot_price"])):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	farms[i]["max_gpus"] = int(farms[i]["max_gpus"]) + 1
 	return ""
 
@@ -401,11 +403,11 @@ func _try_auto_replace(f: Dictionary) -> void:
 	for i in f["gpus"].size():
 		if bool(f["gpus"][i]["broken"]):
 			var t := String(f["gpus"][i]["type"])
-			f["gpus"][i] = { "type": t, "speed": float(VCData.GPU_TYPES[t]["speed"]), "broken": false }
+			f["gpus"][i] = { "type": t, "speed": float(VCData.GPU_TYPES[t]["speed"]), "broken": false, "installed_at": Time.get_unix_time_from_system() }
 			s["mining"]["maxims"] = int(s["mining"]["maxims"]) - 1
 			return
 
-# в”Ђв”Ђ РєСЂРµРґРёС‚С‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── кредиты ───────────────────────────────────────────────────────────────────
 func loan_owed(l: Dictionary) -> float:
 	return float(l["amount"]) * (1.0 + float(VCData.LOANS["rate_per_hour"]) * _hours_since(float(l["start"])))
 
@@ -414,10 +416,10 @@ func _hours_since(t: float) -> float:
 
 func loan_take(amount: float, hours: int) -> String:
 	if not s["loans"].is_empty():
-		return "РЈР¶Рµ РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Р№ РєСЂРµРґРёС‚"
+		return "Уже есть активный кредит"
 	amount = floor(amount)
 	if amount < float(VCData.LOANS["min"]) or amount > float(VCData.LOANS["max"]):
-		return "РЎСѓРјРјР° РІРЅРµ РґРёР°РїР°Р·РѕРЅР°"
+		return "Сумма вне диапазона"
 	hours = clampi(hours, int(VCData.LOANS["hours_min"]), int(VCData.LOANS["hours_max"]))
 	s["loans"].append({ "amount": amount, "hours": hours, "start": Time.get_unix_time_from_system(), "paid": false })
 	add_money(amount, "auto")
@@ -426,11 +428,11 @@ func loan_take(amount: float, hours: int) -> String:
 
 func loan_pay_early(i: int) -> String:
 	if i < 0 or i >= s["loans"].size():
-		return "РќРµС‚ РєСЂРµРґРёС‚Р°"
+		return "Нет кредита"
 	var l: Dictionary = s["loans"][i]
 	var owed: float = floor(loan_owed(l))
 	if not spend(owed):
-		return "РќРµ С…РІР°С‚Р°РµС‚ РјРѕРЅРµС‚"
+		return "Не хватает монет"
 	s["loans"].remove_at(i)
 	return ""
 
@@ -452,7 +454,7 @@ func process_loans() -> void:
 		keep.append(l)
 	s["loans"] = keep
 
-# в”Ђв”Ђ РЅРѕРІРѕСЃС‚Рё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── новости ───────────────────────────────────────────────────────────────────
 func ensure_news() -> void:
 	var pending := []
 	for n in s["news"]:
@@ -485,7 +487,7 @@ func apply_news(effect: String) -> void:
 		"zBuy":    push_price("zimbabwe", float(c["zimbabwe"]["price"]) * 1.05)
 		"zSell":   push_price("zimbabwe", maxf(1.0, float(c["zimbabwe"]["price"]) * 0.95))
 
-## Р’РѕР·РІСЂР°С‰Р°РµС‚ РјР°СЃСЃРёРІ С‚РµРєСЃС‚РѕРІ СЃСЂР°Р±РѕС‚Р°РІС€РёС… РЅРѕРІРѕСЃС‚РµР№ (РґР»СЏ С‚РѕСЃС‚Р°).
+## Возвращает массив текстов сработавших новостей (для тоста).
 func news_tick() -> Array:
 	ensure_news()
 	var now := Time.get_unix_time_from_system()
@@ -494,7 +496,7 @@ func news_tick() -> Array:
 	for n in s["news"]:
 		if not bool(n["done"]) and float(n["time"]) <= now:
 			apply_news(String(n["effect"]))
-			s["news_history"].push_front({ "text": n["text"], "time": n["time"], "dir": n.get("dir", 0) })
+			s["news_history"].push_front({ "id": int(n.get("id", 0)), "text": n["text"], "time": n["time"], "dir": n.get("dir", 0) })
 			fired.append(String(n["text"]))
 		else:
 			rest.append(n)
@@ -503,7 +505,7 @@ func news_tick() -> Array:
 	s["news"] = rest
 	return fired
 
-# в”Ђв”Ђ РґРѕСЃС‚РёР¶РµРЅРёСЏ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── достижения ────────────────────────────────────────────────────────────────
 func unlock(id: String) -> void:
 	if id == "":
 		return
@@ -579,7 +581,7 @@ func check_achievements() -> Array:
 			newly.append(a)
 	return newly
 
-# в”Ђв”Ђ С‚РёРє РёРіСЂС‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── тик игры ──────────────────────────────────────────────────────────────────
 func tick(dt: float) -> void:
 	add_money(per_sec() * dt, "auto")
 	var mm := mining_mult()
@@ -601,7 +603,7 @@ func tick(dt: float) -> void:
 			if randf() < p:
 				g["broken"] = true
 				_try_auto_replace(f)
-	# В«РЎС‚Р°СЂРѕСЃС‚СЊВ»: Р°РІС‚Рѕ-РїРѕРєСѓРїРєР° С„Р°Р±СЂРёРє, РїРѕРєР° С…РІР°С‚Р°РµС‚ РґРµРЅРµРі (РєР°Рє РІ РІРµР±Рµ)
+	# «Старость»: авто-покупка фабрик, пока хватает денег (как в вебе)
 	if level("starost") > 0:
 		var china: Dictionary = {}
 		for u in VCData.IDLE:
@@ -619,7 +621,7 @@ func tick(dt: float) -> void:
 	process_loans()
 	check_achievements()
 
-# в”Ђв”Ђ СЃРѕС…СЂР°РЅРµРЅРёРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── сохранение ────────────────────────────────────────────────────────────────
 func save() -> void:
 	s["last_seen"] = Time.get_unix_time_from_system()
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
@@ -644,13 +646,13 @@ func load_game() -> bool:
 	var d: Dictionary = parsed
 	if typeof(d.get("money")) != TYPE_DICTIONARY:
 		return false
-	# РјСЏРіРєРѕРµ СЃР»РёСЏРЅРёРµ: С‡РµРіРѕ РЅРµС‚ РІ С„Р°Р№Р»Рµ вЂ” Р±РµСЂС‘Рј РёР· РЅРѕРІРѕР№ РёРіСЂС‹
+	# мягкое слияние: чего нет в файле — берём из новой игры
 	var base := s
 	new_game()
 	for k in s.keys():
 		if d.has(k):
 			s[k] = d[k]
-	# РЅРѕСЂРјР°Р»РёР·Р°С†РёСЏ СЃР»РѕРІР°СЂРµР№ РїРѕСЃР»Рµ JSON
+	# нормализация словарей после JSON
 	var money: Dictionary = s["money"]
 	for k in ["click", "auto", "casino", "crypto", "mining"]:
 		money[k] = float(money.get(k, 0.0))
@@ -682,9 +684,44 @@ func load_game() -> bool:
 	s["achievements"] = s["achievements"] if typeof(s["achievements"]) == TYPE_DICTIONARY else {}
 	s["news"] = s["news"] if typeof(s["news"]) == TYPE_ARRAY else []
 	s["news_history"] = s["news_history"] if typeof(s["news_history"]) == TYPE_ARRAY else []
+	s["cloud_extra"] = s["cloud_extra"] if typeof(s["cloud_extra"]) == TYPE_DICTIONARY else {}
 	return true
 
-## РћС„С„Р»Р°Р№РЅ-РґРѕС…РѕРґ: РїР°СЃСЃРёРІ + РјР°Р№РЅРёРЅРі, РјР°РєСЃРёРјСѓРј 24 С‡Р°СЃР°.
+# ── облако (data.bin веб-версии) ──────────────────────────────────────────────
+## Собрать двоичное сохранение для сервера.
+func to_cloud() -> PackedByteArray:
+	return VCSaveBin.encode(self)
+
+## Принять облачное сохранение. Возвращает "" или текст ошибки.
+func from_cloud(bytes: PackedByteArray) -> String:
+	var res := VCSaveBin.decode(bytes)
+	if not bool(res["ok"]):
+		return String(res["err"])
+	var st: Dictionary = res["state"]
+	for k in s.keys():
+		if st.has(k):
+			s[k] = st[k]
+	# деньги и мелочи приводим к числам: JSON/облако могут дать int
+	var money: Dictionary = s["money"]
+	for k in ["click", "auto", "casino", "crypto", "mining"]:
+		money[k] = float(money.get(k, 0.0))
+	s["clicks"] = int(float(s["clicks"]))
+	s["skin"] = int(s["skin"])
+	s["owned_skins"] = s["owned_skins"].map(func(x): return int(x))
+	if s["owned_skins"].is_empty():
+		s["owned_skins"] = [0]
+	if not s["owned_skins"].has(s["skin"]):
+		s["skin"] = int(s["owned_skins"][0])
+	var cas: Dictionary = s["casino"]
+	cas["total_spins"] = int(cas.get("total_spins", 0))
+	cas["multiplier"] = float(cas.get("multiplier", VCData.CASINO["mult_min"]))
+	return ""
+
+## Изменилось ли состояние с момента последней отправки (для автосинка).
+func cloud_digest() -> String:
+	return str(hash(to_cloud()))
+
+## Оффлайн-доход: пассив + майнинг, максимум 24 часа.
 func apply_offline() -> float:
 	var last := float(s.get("last_seen", 0.0))
 	if last <= 0.0:
@@ -709,7 +746,7 @@ func apply_offline() -> float:
 	ensure_news()
 	return sec
 
-# в”Ђв”Ђ С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+# ── форматирование ────────────────────────────────────────────────────────────
 static func fmt(v: float) -> String:
 	var names := ["", "K", "M", "B", "T", "Qa", "Qi", "Sx"]
 	var i := 0

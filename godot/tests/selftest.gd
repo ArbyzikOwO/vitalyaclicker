@@ -29,11 +29,13 @@ func _initialize() -> void:
 	test_casino()
 	test_loans()
 	test_save_load()
+	test_cloud_bin()
 	test_offline()
 	test_fmt()
 
 	print("── UI ──")
 	_ui = load("res://scenes/main.tscn").instantiate()
+	_ui.set("_skip_gate", true)
 	root.add_child(_ui)
 	process_frame.connect(_on_frame)
 
@@ -254,6 +256,87 @@ func test_save_load() -> void:
 	ok("крипта совпала", close(float(h.s["crypto"]["operativka"]["held"]), 42.0))
 	ok("версия 24", int(h.s["version"]) == 24)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://selftest_save.json"))
+
+func test_cloud_bin() -> void:
+	print("── ОБЛАКО data.bin ──")
+	# ключ денег: значения из веб-версии (FNV-1a), проверено Node
+	ok("cloud: ключ 13", VCSaveBin.money_key({ "click": 13, "auto": 0, "casino": 0, "crypto": 0, "mining": 0 }) == 3342930402)
+	ok("cloud: ключ нулей", VCSaveBin.money_key({ "click": 0, "auto": 0, "casino": 0, "crypto": 0, "mining": 0 }) == 1518730916)
+	ok("cloud: ключ с дробями", VCSaveBin.money_key({ "click": 123.5, "auto": 1e6, "casino": 0, "crypto": 2500, "mining": 7 }) == 1097217617)
+	ok("cloud: ключ порядок не важен", VCSaveBin.money_key({ "mining": 7, "crypto": 2500, "casino": 0, "auto": 1e6, "click": 123.5 }) == 1097217617)
+
+	var g := VCGame.new()
+	g.s["money"] = { "click": 123.5, "auto": 1e6, "casino": 0.0, "crypto": 2500.0, "mining": 7.0 }
+	g.s["clicks"] = 321
+	g.s["upgrades"]["maxim"] = 5
+	g.s["upgrades"]["gold"] = 2
+	g.s["owned_skins"] = [0, 3, 3, 12]
+	g.s["skin"] = 3
+	g.s["casino"]["total_spins"] = 42
+	g.s["casino"]["multiplier"] = 2.5
+	g.s["propusk"] = true
+	g.s["vnv_pass"] = true
+	g.s["crypto"]["operativka"]["price"] = 321.0
+	g.s["crypto"]["operativka"]["held"] = 4.5
+	g.s["crypto"]["operativka"]["history"] = [100.0, 200.0, 321.0]
+	g.s["mining"]["gpus"].append({ "type": "rx580", "speed": 50.0, "broken": false })
+	g.s["mining"]["maxims"] = 2
+	g.s["mining"]["maxims_enabled"] = true
+	g.s["mining"]["farms"][0]["gpus"].append({ "type": "rtx5080", "speed": 100.0, "broken": true, "installed_at": 111.0 })
+	g.s["loans"].append({ "amount": 5000.0, "hours": 3, "start": 1000.0, "paid": false })
+	g.s["achievements"]["click1"] = true
+	g.s["achievements"]["g_sprout"] = true
+	g.s["news"].append({ "id": 2, "text": "x", "effect": "op+10", "dir": 1, "time": 555.0, "done": false })
+	g.s["news_history"].append({ "id": 2, "text": "x", "time": 444.0, "dir": 1 })
+	g.s["last_seen"] = 777777.0
+	g.s["cloud_extra"] = {
+		"sound_choice": 1, "starost_on": true, "auto_reset_at": 42.0,
+		"auto_click_warns": 2.0, "auto_click_warns_reset_at": 3.0, "blocked": false,
+	}
+
+	var bytes := g.to_cloud()
+	ok("cloud: запись не пустая", bytes.size() > 100, str(bytes.size()))
+	ok("cloud: magic", bytes.decode_u32(0) == 0x56434442)
+	ok("cloud: версия 24", bytes.decode_u32(4) == 24)
+	ok("cloud: ключ в файле", bytes.decode_u32(8) == 1097217617)
+	ok("cloud: деньги в файле", bytes.decode_double(12) == 123.5)
+
+	var res := VCSaveBin.decode(bytes)
+	ok("cloud: чтение ок", bool(res["ok"]), String(res["err"]))
+	var s2: Dictionary = res["state"]
+	ok("cloud: деньги", close(float(s2["money"]["auto"]), 1e6))
+	ok("cloud: клики", int(s2["clicks"]) == 321)
+	ok("cloud: апгрейды", int(s2["upgrades"].get("maxim", 0)) == 5 and int(s2["upgrades"].get("gold", 0)) == 2)
+	ok("cloud: скины с дублями", (s2["owned_skins"] as Array).size() == 4 and int(s2["skin"]) == 3)
+	ok("cloud: казино", int(s2["casino"]["total_spins"]) == 42 and close(float(s2["casino"]["multiplier"]), 2.5))
+	ok("cloud: пропуск и внв", bool(s2["propusk"]) and bool(s2["vnv_pass"]))
+	ok("cloud: крипта", close(float(s2["crypto"]["operativka"]["price"]), 321.0) and close(float(s2["crypto"]["operativka"]["held"]), 4.5))
+	ok("cloud: история цен", (s2["crypto"]["operativka"]["history"] as Array).size() == 3)
+	ok("cloud: видеокарты", (s2["mining"]["gpus"] as Array).size() == 1 and String(s2["mining"]["gpus"][0]["type"]) == "rx580")
+	ok("cloud: ферма", (s2["mining"]["farms"][0]["gpus"] as Array).size() == 1 and bool(s2["mining"]["farms"][0]["gpus"][0]["broken"]))
+	ok("cloud: кредит", (s2["loans"] as Array).size() == 1 and close(float(s2["loans"][0]["amount"]), 5000.0))
+	ok("cloud: достижение", bool(s2["achievements"].get("click1", false)))
+	ok("cloud: достижение сада", bool(s2["achievements"].get("g_sprout", false)))
+	ok("cloud: новость", (s2["news"] as Array).size() == 1 and int(s2["news"][0]["id"]) == 2)
+	ok("cloud: история новостей", (s2["news_history"] as Array).size() == 1)
+	ok("cloud: звук перенесён", int(res["extra"].get("sound_choice", -1)) == 1)
+	ok("cloud: время выхода", close(float(s2["last_seen"]), 777777.0))
+
+	var g2 := VCGame.new()
+	var err2 := g2.from_cloud(bytes)
+	ok("cloud: from_cloud без ошибок", err2 == "", err2)
+	ok("cloud: баланс после импорта", close(g2.total_money(), 1000123.5 + 2500.0 + 7.0, 1e-9), "%.2f" % g2.total_money())
+	var bytes2 := g2.to_cloud()
+	var res2 := VCSaveBin.decode(bytes2)
+	ok("cloud: повторное чтение", bool(res2["ok"]), String(res2["err"]))
+	ok("cloud: повторный импорт денег", close(float(res2["state"]["money"]["crypto"]), 2500.0))
+	ok("cloud: повторный импорт достижений", bool(res2["state"]["achievements"].get("g_sprout", false)))
+
+	var bad := bytes.duplicate()
+	bad.encode_u32(8, 12345)
+	ok("cloud: плохой ключ отвергнут", not bool(VCSaveBin.decode(bad)["ok"]))
+	ok("cloud: обрезка отвергнута", not bool(VCSaveBin.decode(bytes.slice(0, 40))["ok"]))
+	ok("cloud: неверная версия отвергнута", not bool(VCSaveBin.decode(bytes.slice(0, 60))["ok"]))
 
 func test_offline() -> void:
 	var g := VCGame.new()

@@ -35,18 +35,33 @@ var _save_tick := 0.0
 var _news_tick := 0.0
 var _side := -1.0
 
+var net: VCNet
+var _gate: Control
+var _gate_status: Label
+var _gate_name: LineEdit
+var _gate_pw: LineEdit
+var _gate_server: LineEdit
+var _gate_busy := false
+var _playing := false
+var _cloud_rev := 0
+var _cloud_tick := 0.0
+var _last_digest := ""
+var _pushing := false
+var _conflict_open := false
+var _link_err_at := 0.0
+var _skip_gate := false
+
 func _ready() -> void:
 	game = VCGame.new()
-	var loaded := game.load_game()
-	if loaded:
-		var off := game.apply_offline()
-		if off > 60.0:
-			_toast_deferred("⏳ Оффлайн: +%s монет за %d мин" % [
-				VCGame.fmt(game.per_sec() * off), int(off / 60.0)])
-	if not loaded:
-		game.new_game()
+	game.load_game()   # локальный кэш; облако при входе важнее
+	net = VCNet.new()
+	net.link_changed.connect(_on_link_changed)
+	add_child(net)
 	_build_theme()
 	_build_ui()
+	_gate = _build_gate()
+	add_child(_gate)
+	_root.visible = false
 	_shown_money = game.total_money()
 	_show_tab("click")
 	for a in OS.get_cmdline_user_args():
@@ -55,12 +70,19 @@ func _ready() -> void:
 	var win := get_window()
 	if win:
 		win.min_size = Vector2i(400, 620)
+	if _skip_gate or "--offline" in OS.get_cmdline_user_args():
+		_begin_play()
+		return
+	_start_session()
 
 func _notification(what: int) -> void:
 	if (what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_PREDELETE) and game != null:
 		game.save()
 
 func _process(delta: float) -> void:
+	if not _playing:
+		_resize_content()
+		return
 	_tick += delta
 	if _tick >= 0.25:
 		game.tick(_tick)
@@ -86,6 +108,7 @@ func _process(delta: float) -> void:
 				_toast("📰 " + txt)
 	_animate_money(delta)
 	_resize_content()
+	_sync_check(delta)
 
 func _animate_money(delta: float) -> void:
 	var target := game.total_money()
@@ -1179,6 +1202,28 @@ func _on_maxim_toggle() -> void:
 var _loan_refresh: Callable
 
 func _build_more() -> void:
+	_content.add_child(_label("АККАУНТ", 13, GOLD))
+	var acc_card := _card(Color(GOLD, 0.22))
+	var acc_v := _vbox(8)
+	if net != null and net.user_name != "" and net.authed:
+		acc_v.add_child(_label("👤 " + net.user_name, 17, TEXT))
+		acc_v.add_child(_label("Сервер: %s" % net.base, 10.5, MUTED, true))
+		acc_v.add_child(_label("Облако: rev %d · автосинк каждые 10 секунд" % _cloud_rev, 10.5, MUTED, true))
+		var ar := _row(6)
+		var sy := _button("🔄 Синхронизировать", 12)
+		sy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sy.pressed.connect(_sync_now)
+		var lo := _button("🚪 Выйти", 12, RED)
+		lo.pressed.connect(_on_logout)
+		ar.add_child(sy)
+		ar.add_child(lo)
+		acc_v.add_child(ar)
+	else:
+		acc_v.add_child(_label("Офлайн-режим (разработка)", 13, TEXT))
+		acc_v.add_child(_label("Аккаунт не подключён: сохранение только в файле.", 11, MUTED, true))
+	acc_card.add_child(acc_v)
+	_content.add_child(acc_card)
+
 	_content.add_child(_label("КРЕДИТ", 13, GOLD))
 	var card := _card()
 	var v := _vbox(8)
@@ -1264,6 +1309,7 @@ func _build_more() -> void:
 	sysv.add_child(_label("СОХРАНЕНИЕ", 12, GOLD))
 	sysv.add_child(_label("Файл: %s\nВерсия сохранения: %d · автосейв каждые 5 секунд" % [
 		ProjectSettings.globalize_path(game.save_path), int(game.s["version"])], 10.5, MUTED, true))
+	sysv.add_child(_label("Облако: %s" % ("подключено · rev %d" % _cloud_rev if net != null and net.authed else "не подключено"), 10.5, MUTED, true))
 	var sb := _button("💾 Сохранить сейчас", 12)
 	sb.pressed.connect(func() -> void:
 		game.save()
@@ -1272,6 +1318,315 @@ func _build_more() -> void:
 	sysv.add_child(sb)
 	sys.add_child(sysv)
 	_content.add_child(sys)
+
+# ── аккаунт и облако ─────────────────────────────────────────────────────────
+func _build_gate() -> Control:
+	var layer := ColorRect.new()
+	layer.color = Color(0.015, 0.025, 0.05, 0.9)
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(390, 0)
+	var sb := _sbox(CARD, Color(GOLD, 0.35), 1, 22, true)
+	sb.set_content_margin_all(20)
+	card.add_theme_stylebox_override("panel", sb)
+	center.add_child(card)
+	var v := _vbox(9)
+	var title := _label("VitalyaClicker 69", 27, GOLD)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_glow_label(title, GOLD2, 3)
+	v.add_child(title)
+	var sub := _label("Аккаунт нужен, чтобы играть: прогресс хранится в облаке и не потеряется.", 11, MUTED, true)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+
+	v.add_child(_label("СЕРВЕР", 10, MUTED))
+	_gate_server = LineEdit.new()
+	_gate_server.text = "http://127.0.0.1:3000"
+	_gate_server.placeholder_text = "http://127.0.0.1:3000"
+	v.add_child(_gate_server)
+
+	v.add_child(_label("ЛОГИН", 10, MUTED))
+	_gate_name = LineEdit.new()
+	_gate_name.placeholder_text = "имя в игре"
+	_gate_name.text_submitted.connect(func(_s: String) -> void: _gate_pw.grab_focus())
+	v.add_child(_gate_name)
+
+	v.add_child(_label("ПАРОЛЬ", 10, MUTED))
+	_gate_pw = LineEdit.new()
+	_gate_pw.secret = true
+	_gate_pw.placeholder_text = "пароль"
+	_gate_pw.text_submitted.connect(func(_s: String) -> void: _on_gate(false))
+	v.add_child(_gate_pw)
+
+	_gate_status = _label("Войдите или создайте аккаунт.", 11.5, MUTED, true)
+	_gate_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_gate_status)
+
+	var row := _row(8)
+	var b1 := _button("Войти", 14, Color("221704"))
+	b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b1.custom_minimum_size = Vector2(0, 44)
+	var gold := _sbox(GOLD, GOLD_SOFT, 1, 12, true)
+	gold.shadow_color = Color(GOLD2, 0.28)
+	gold.shadow_size = 12
+	b1.add_theme_stylebox_override("normal", gold)
+	b1.add_theme_stylebox_override("hover", gold)
+	for c in ["font_color", "font_hover_color", "font_focus_color", "font_pressed_color"]:
+		b1.add_theme_color_override(c, Color("221704"))
+	b1.pressed.connect(func() -> void: _on_gate(false))
+	var b2 := _button("Регистрация", 14)
+	b2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b2.custom_minimum_size = Vector2(0, 44)
+	b2.pressed.connect(func() -> void: _on_gate(true))
+	row.add_child(b1)
+	row.add_child(b2)
+	v.add_child(row)
+	var foot := _label("Сессия запоминается на 7 дней. Выйдете — прогресс останется в облаке.", 10, MUTED, true)
+	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(foot)
+	card.add_child(v)
+	return layer
+
+func _gate_set(text: String, error := false) -> void:
+	if _gate_status == null:
+		return
+	_gate_status.text = text
+	_gate_status.add_theme_color_override("font_color", RED if error else MUTED)
+
+func _start_session() -> void:
+	_gate_server.text = net.base
+	if net.session_valid():
+		_gate_busy = true
+		_gate_set("☁️ Подключаемся к серверу…")
+		var ok := await net.ensure_link()
+		if ok:
+			await _after_login()
+			return
+		_gate_busy = false
+		_gate_name.text = net.user_name
+		_gate_set(net.last_error + "\nВведите пароль, чтобы войти снова.", true)
+	else:
+		_gate_set("Войдите или создайте аккаунт.")
+
+func _on_gate(register: bool) -> void:
+	if _gate_busy or net == null:
+		return
+	var n := _gate_name.text.strip_edges()
+	var p := _gate_pw.text
+	if n.length() < 2:
+		_gate_set("Логин слишком короткий", true)
+		return
+	if p.length() < 4:
+		_gate_set("Пароль слишком короткий", true)
+		return
+	_gate_busy = true
+	_gate_set("⏳ Соединяемся…")
+	var r: Dictionary
+	if register:
+		r = await net.register(n, p, _gate_server.text)
+	else:
+		r = await net.login(n, p, _gate_server.text)
+	if not bool(r.get("ok", false)):
+		_gate_busy = false
+		_gate_set(String(r.get("err", "Ошибка")), true)
+		return
+	await _after_login()
+
+func _after_login() -> void:
+	_gate_set("☁️ Загружаем сохранение…")
+	var info := await net.save_info()
+	if not bool(info.get("ok", false)):
+		_gate_busy = false
+		_gate_set("Не удалось получить сохранение: " + String(info.get("err", "ошибка")), true)
+		return
+	var sv: Variant = info.get("save")
+	var err := ""
+	if sv == null:
+		game.new_game()
+		_cloud_rev = 0
+		var r := await _push_cloud(true)
+		if not bool(r.get("ok", false)):
+			err = "Не удалось создать облачное сохранение: " + String(r.get("err", "ошибка"))
+	else:
+		var g := await net.save_get()
+		if not bool(g.get("ok", false)):
+			err = "Не удалось скачать сохранение: " + String(g.get("err", "ошибка"))
+		elif bool(g.get("empty", false)):
+			game.new_game()
+			var r2 := await _push_cloud(true)
+			if not bool(r2.get("ok", false)):
+				err = "Не удалось создать облачное сохранение"
+		else:
+			err = game.from_cloud(Marshalls.base64_to_raw(String(g.get("main", ""))))
+			if err == "":
+				_cloud_rev = int(g.get("rev", 0))
+				_last_digest = game.cloud_digest()
+	if err != "":
+		_gate_busy = false
+		_gate_set(err, true)
+		return
+	_begin_play()
+
+func _begin_play() -> void:
+	_gate_busy = false
+	_playing = true
+	if _root:
+		_root.visible = true
+	if _gate:
+		_gate.visible = false
+	var off := game.apply_offline()
+	_shown_money = game.total_money()
+	_update_header()
+	if _content != null:
+		_rebuild()
+	if off > 60.0:
+		_toast("⏳ Оффлайн: +%s монет за %d мин" % [VCGame.fmt(game.per_sec() * off), int(off / 60.0)])
+	if net != null and net.authed:
+		_toast("👤 " + net.user_name + " · облако подключено")
+
+func _sync_check(delta: float) -> void:
+	if net == null or not net.authed or _pushing or _conflict_open:
+		return
+	_cloud_tick += delta
+	if _cloud_tick < 10.0:
+		return
+	_cloud_tick = 0.0
+	if game.cloud_digest() != _last_digest:
+		_push_cloud(false)
+
+func _push_cloud(force: bool) -> Dictionary:
+	if _pushing:
+		return { "ok": false, "err": "busy" }
+	_pushing = true
+	var r := await net.save_put(game.to_cloud(), _cloud_rev, force)
+	_pushing = false
+	if bool(r.get("ok", false)):
+		_cloud_rev = int(r.get("rev", _cloud_rev))
+		_last_digest = game.cloud_digest()
+		return r
+	if String(r.get("err", "")) == "conflict":
+		_show_conflict()
+	return r
+
+func _sync_now() -> void:
+	if net == null or not net.authed:
+		_toast("❌ Нет связи с сервером")
+		return
+	if _pushing:
+		_toast("⏳ Синхронизация уже идёт")
+		return
+	var r := await _push_cloud(false)
+	if bool(r.get("ok", false)):
+		_toast("☁️ Сохранено в облако (rev %d)" % _cloud_rev)
+		_rebuild()
+	elif String(r.get("err", "")) != "conflict":
+		_toast("❌ " + String(r.get("err", "Ошибка")))
+
+func _show_conflict() -> void:
+	if _conflict_open:
+		return
+	_conflict_open = true
+	_modal("☁️ Сохранение изменилось", "В облаке более свежая версия (rev %d). Что делать?" % _cloud_rev, [
+		{ "label": "Взять из облака", "color": GOLD, "cb": _take_cloud },
+		{ "label": "Записать своё", "color": RED, "cb": _force_cloud },
+	])
+
+func _take_cloud() -> void:
+	_conflict_open = false
+	var g := await net.save_get()
+	if not bool(g.get("ok", false)) or bool(g.get("empty", false)):
+		_toast("❌ Не удалось скачать облако")
+		return
+	var err := game.from_cloud(Marshalls.base64_to_raw(String(g.get("main", ""))))
+	if err != "":
+		_toast("❌ " + err)
+		return
+	_cloud_rev = int(g.get("rev", 0))
+	_last_digest = game.cloud_digest()
+	game.save()
+	_shown_money = game.total_money()
+	_update_header()
+	_rebuild()
+	_toast("☁️ Взято из облака")
+
+func _force_cloud() -> void:
+	_conflict_open = false
+	var r := await _push_cloud(true)
+	if bool(r.get("ok", false)):
+		_toast("☁️ Записано в облако")
+	else:
+		_toast("❌ " + String(r.get("err", "Ошибка")))
+
+func _on_logout() -> void:
+	if _pushing:
+		_toast("⏳ Подождите, идёт сохранение")
+		return
+	var r := await _push_cloud(false)
+	if not bool(r.get("ok", false)) and String(r.get("err", "")) != "conflict":
+		_toast("❌ Нет связи — прогресс не сохранён. Выход отменён.")
+		return
+	if _conflict_open:
+		_toast("Сначала решите, какое сохранение оставить")
+		return
+	net.forget()
+	game.new_game()
+	game.save()
+	_playing = false
+	_cloud_rev = 0
+	_last_digest = ""
+	_shown_money = 0.0
+	_gate.visible = true
+	_root.visible = false
+	_gate_name.text = ""
+	_gate_pw.text = ""
+	_gate_server.text = net.base
+	_gate_set("Вы вышли. Прогресс остался в облаке — войдите, чтобы продолжить.")
+	_toast("🚪 Вы вышли из аккаунта")
+
+func _modal(title: String, text: String, actions: Array) -> void:
+	var layer := ColorRect.new()
+	layer.color = Color(0, 0, 0, 0.68)
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(center)
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(370, 0)
+	var sb := _sbox(CARD, Color(GOLD, 0.4), 1, 20, true)
+	sb.set_content_margin_all(18)
+	card.add_theme_stylebox_override("panel", sb)
+	center.add_child(card)
+	var v := _vbox(10)
+	v.add_child(_label(title, 17, GOLD))
+	v.add_child(_label(text, 12, TEXT, true))
+	var row := _row(8)
+	for a in actions:
+		var act: Dictionary = a
+		var col: Color = act.get("color", TEXT)
+		var b := _button(String(act.get("label", "OK")), 12, col)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.custom_minimum_size = Vector2(0, 42)
+		b.pressed.connect(func() -> void:
+			layer.queue_free()
+			var cb: Callable = act.get("cb", Callable())
+			if cb.is_valid():
+				cb.call()
+		)
+		row.add_child(b)
+	v.add_child(row)
+	card.add_child(v)
+	add_child(layer)
+
+func _on_link_changed(ok: bool, text: String) -> void:
+	if ok or not _playing:
+		return
+	var now := float(Time.get_ticks_msec())
+	if now - _link_err_at > 30000.0:
+		_link_err_at = now
+		_toast("⚠️ " + text)
 
 func _time_str(unix: float) -> String:
 	var t := Time.get_time_dict_from_unix_time(int(unix))
