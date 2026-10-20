@@ -616,7 +616,7 @@ function cardView(rm, name) {
     players: rm.players.map(p => ({ name: getUser(p).display, user: p, online: isOnline(p), owner: p === rm.owner, gone: rm.gone.has(p) }))
   };
 }
-function cardPush(rm) { for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'card.room', room: cardView(rm, p) }); }
+function cardPush(rm) { for (const p of rm.players) if (!rm.gone || !rm.gone.has(p)) pushTo(p, { t: 'card.room', room: cardView(rm, p) }); }
 function cardGameView(rm, name) {
   const v = rm.mod.view(rm.g, rm.players.indexOf(name));
   v.id = rm.id; v.stake = rm.bet; v.title = rm.mod.title;
@@ -630,6 +630,9 @@ function cardGameView(rm, name) {
   v.turnMs = rm.turnMs;
   v.opts = rm.opts || {};
   v.money = rm.payouts || null;
+  v.forfeit = rm.forfeit || '';
+  /* досрочный выход: раунд уже рассчитан, хотя партия в движке не доиграна */
+  if (rm.state === 'done') v.over = true;
   return v;
 }
 function cardPushGame(rm) { for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'card.state', game: cardGameView(rm, p) }); }
@@ -714,10 +717,9 @@ function cardStart(rm) {
   cardPush(rm);
   cardAfter(rm);
 }
-function cardSettle(rm) {
+function cardPay(rm, pay) {
   if (rm.state === 'done') return;
   clearTimeout(rm.timer); rm.timer = null;
-  const pay = rm.mod.payouts(rm.g, rm.bet);
   rm.payouts = pay.map(x => Math.max(0, Math.floor(Number(x) || 0)));
   /* деньги не должны исчезать: если движок вернул меньше банка — остаток победителю */
   const potSum = rm.bet * rm.players.length;
@@ -738,7 +740,7 @@ function cardSettle(rm) {
     const U = getUser(rm.players[i]); if (!U) continue;
     const amount = rm.payouts[i], net = amount - rm.bet;
     if (amount) addPending(U, 'credit', amount, rm.mod.title + ': банк');
-    logTx(U, { type: 'game', amount: net, note: rm.mod.title + (net > 0 ? ' · победа' : net < 0 ? ' · проигрыш' : ' · возврат ставки') });
+    logTx(U, { type: 'game', amount: net, note: rm.mod.title + (rm.forfeitBy === rm.players[i] ? ' · выход из партии' : net > 0 ? ' · победа' : net < 0 ? ' · проигрыш' : ' · возврат ставки') });
     const S = stats(U); S.cards = (S.cards || 0) + 1; addXp(U, CFG.xpBj);
     if (net > 0) { S.cardWins = (S.cardWins || 0) + 1; addXp(U, CFG.xpBjWin); winners.push(i); }
   }
@@ -752,24 +754,50 @@ function cardSettle(rm) {
   const t = setTimeout(() => cardRooms.delete(rm.id), CARD_DONE_MS);
   if (t.unref) t.unref();
 }
+function cardSettle(rm) {
+  if (rm.state === 'done') return;
+  cardPay(rm, rm.mod.payouts(rm.g, rm.bet));
+}
+/* Выход из партии = «сдаться»: раунд сразу заканчивается, вышедший теряет
+   ставку, остальные получают свою ставку обратно и его ставку поровну. */
+function cardForfeit(rm, name) {
+  if (rm.state !== 'play') return false;
+  const i = rm.players.indexOf(name);
+  if (i < 0) return false;
+  const n = rm.players.length, others = n - 1, bet = rm.bet;
+  const pay = new Array(n).fill(0);
+  if (others > 0) {
+    const share = Math.floor(bet / others);
+    let rem = bet - share * others;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      pay[j] = bet + share + (rem-- > 0 ? 1 : 0);
+    }
+  }
+  rm.forfeitBy = name;
+  rm.forfeit = getUser(name).display;
+  cardPay(rm, pay);
+  return true;
+}
 function cardLeave(name, why, force) {
   const rm = cardRoomOf(name); if (!rm) return false;
-  /* партия идёт: выход = «сдаться» — карты уходят из игры, ставка остаётся в банке */
+  /* партия идёт: выход = «сдаться» — раунд сразу завершается, ставка уходит остальным */
   if (rm.state === 'play') {
     if (!force) throw new Error('Партия идёт — её нужно доиграть');
     const i = rm.players.indexOf(name);
     if (i >= 0 && !rm.gone.has(name)) {
       rm.gone.add(name);
+      userCard.delete(name);
+      pushTo(name, { t: 'card.gone' });
+      pushTo(name, { t: 'toast', text: '🚪 Вы вышли из партии — раунд завершён, ставка досталась остальным' });
       if (typeof rm.mod.leave === 'function') { try { rm.mod.leave(rm.g, i); } catch (e) { } }
+      cardForfeit(rm, name);
+      for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'toast', text: '🚪 ' + getUser(name).display + ' вышел(ла) из партии — раунд завершён' });
+      markDirty();
+      pushCardLobby();
+      return true;
     }
-    userCard.delete(name);
-    pushTo(name, { t: 'card.gone' });
-    pushTo(name, { t: 'toast', text: '🚪 Вы вышли из партии — ставка не возвращается' });
-    for (const p of rm.players) if (!rm.gone.has(p)) pushTo(p, { t: 'toast', text: '🚪 ' + getUser(name).display + ' вышел(ла) из партии' });
-    markDirty();
-    cardAfter(rm);
-    pushCardLobby();
-    return true;
+    return false;
   }
   clearTimeout(rm.timer); rm.timer = null;
   userCard.delete(name);
@@ -1718,6 +1746,13 @@ wss.on('connection', w => { w.isAlive = true; w.on('pong', () => { w.isAlive = t
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`VitalyaClicker online server: http://localhost:${PORT}  (игра раздаётся из ${ROOT})`);
+    try {
+      const nets = require('os').networkInterfaces();
+      const lan = Object.values(nets).reduce((a, l) => a.concat(l || []), [])
+        .filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address)[0];
+      if (lan) console.log(`игроки в той же сети: http://${lan}:${PORT}`);
+    } catch (e) {}
+    console.log('удобный запуск: start-server.cmd (Windows) или ./start-server.sh (Linux)');
     if (!ADMIN_CODE_HASH) console.log('ВНИМАНИЕ: код админки не задан — вход в админку по коду недоступен (server/secret.json → adminCode)');
     const lc = localToolchain();
     console.log('выпуск обновлений: набор для сборки на этом компьютере — ' + (ReleasePlan.canLocal(lc) ? 'есть (локальная сборка)' : 'нет: ' + ReleasePlan.missingLocal(lc).join(', ')));

@@ -1,0 +1,27 @@
+; VitalyaClicker 69 — прототип на Godot 4 (фундамент переноса с веб-версии).
+; Это НЕ полный перенос: здесь только кликер, экономика и сохранение,
+; чтобы начать проект в Godot и наращивать функции по одному.
+; Открыть: Godot 4.2+ → Import → выбрать эту папку (project.godot).
+; Запуск: F5.
+
+config_version=5
+
+[application]
+
+config/name="VitalyaClicker 69 — Godot"
+config/description="Прототип кликера: деньги, апгрейды, авто-доход, сохранение."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.2", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=480
+window/size/viewport_height=800
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.043, 0.055, 0.078, 1)

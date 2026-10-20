@@ -373,6 +373,27 @@ function authTry(token, version) {
   for (const [cl, p] of [[A, cpa], [B, cpb], [C2, cpc]]) await cl.req('wallet.ack', { ids: p.items.map(i => i.id) });
   await A.req('card.leave');
 
+  console.log('— Карты: досрочный выход = сдача раунда');
+  for (const cl of [A, B]) { const x = await cl.req('wallet.pending'); await cl.req('wallet.ack', { ids: x.items.map(i => i.id) }); }
+  const f0 = (await A.req('wallet.pending')).avail, f1 = (await B.req('wallet.pending')).avail;
+  const fcr = await A.req('card.create', { game: 'war', bet: 50000 });
+  ok(fcr.ok, 'стол для проверки выхода создан');
+  const fcId = fcr.room.id;
+  ok((await B.req('card.join', { room: fcId })).ok, 'Bob сел за стол');
+  ok((await A.req('card.start')).ok, 'раздача началась');
+  await sleep(100);
+  ok((await B.req('card.leave')).ok, 'Bob вышел из партии');
+  await sleep(150);
+  const fg = A.last('card.state') && A.last('card.state').game;
+  ok(fg && fg.id === fcId && fg.over, 'выход сразу завершил раунд');
+  ok(fg && fg.forfeit === 'Bob', 'в результате видно, кто сдался');
+  const fa = (await A.req('wallet.pending')).avail, fb = (await B.req('wallet.pending')).avail;
+  ok(fb - f1 === -50000, 'вышедший потерял ставку');
+  ok(fa - f0 === 50000, 'соперник забрал ставку вышедшего');
+  ok(!B.pushes.some(m => m.t === 'card.state' && m.game && m.game.id === fcId && m.game.over), 'вышедшему не присылают завершённую раздачу');
+  await A.req('card.leave');
+  await sleep(60);
+
   console.log('— Карты: правила игр (cards.js / poker.js)');
   const CL = require('./cards.js'), PK = require('./poker.js');
   ok(CL.deck36().length === 36 && CL.deck52().length === 52, 'колоды на 36 и 52 карты');
@@ -452,18 +473,18 @@ function authTry(token, version) {
   await sleep(140);
   ok(B.last('card.gone') != null, 'вышедший вернулся к списку столов');
   const gq = A.last('card.state').game;
-  ok(gq && gq.gone && gq.gone[1] === true, 'остальные видят, что игрок вышел');
+  ok(gq && gq.over && gq.forfeit === 'Bob', 'выход сразу завершил раунд, видно кто сдался');
   ok((await B.req('card.create', { game: 'bj', bet: 20000 })).ok, 'вышедший может сесть за другой стол');
   await B.req('card.leave');
-  await driveCards([A, B, C2], durakGesture, 400);
-  await sleep(200);
+  await sleep(120);
   const gq2 = A.last('card.state').game;
-  ok(gq2 && gq2.over, 'партия после выхода доиграна');
+  ok(gq2 && gq2.over, 'раунд после выхода завершён');
   const qa = await A.req('wallet.pending'), qb = await B.req('wallet.pending'), qc = await C2.req('wallet.pending');
   const qNets = [qa.avail - qBefore[0], qb.avail - qBefore[1], qc.avail - qBefore[2]];
   ok(qNets.reduce((s, x) => s + x, 0) === 0, 'выход из партии: деньги не создаются и не пропадают');
   ok(gq2.money && gq2.money.reduce((s, x) => s + x, 0) === 60000, 'банк 60000 разошёлся полностью');
-  ok(qNets[1] <= 0, 'вышедший ничего не заработал — ставка осталась в банке');
+  ok(qNets[1] === -20000, 'вышедший потерял всю ставку');
+  ok(qNets[0] === 10000 && qNets[2] === 10000, 'остальные поделили его ставку поровну');
   for (const [cl, p] of [[A, qa], [B, qb], [C2, qc]]) await cl.req('wallet.ack', { ids: p.items.map(i => i.id) });
 
   console.log('— Опыт, профиль, лидерборд');

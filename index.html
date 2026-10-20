@@ -139,6 +139,19 @@
   .casino,.crypto-box,.loan-box{background:linear-gradient(180deg,#1c2434,#12161f);border:1px solid var(--line);border-radius:18px;padding:16px 14px;text-align:center;margin-bottom:12px;}
   .casino h2,.crypto-box h2,.loan-box h2{font-size:20px;margin-bottom:4px;letter-spacing:2px;font-weight:900;background:linear-gradient(180deg,#ffd85e,#ff9f1c);-webkit-background-clip:text;background-clip:text;color:transparent;}
   .casino .sub,.crypto-box .sub,.loan-box .sub{font-size:11.5px;color:var(--muted);margin-bottom:12px}
+  /* кредит: карточка с прогрессом срока и досрочным погашением */
+  .loan-empty{color:var(--muted);font-size:12px;padding:6px 0}
+  .loan-card{background:#0e121a;border:1px solid #2a3446;border-radius:14px;padding:12px;margin-bottom:10px;transition:border-color .15s ease}
+  .loan-card:hover{border-color:#3a4a63}
+  .loan-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12.5px}
+  .loan-left{color:var(--muted);font-size:11.5px}
+  .loan-sum{color:var(--gold)}
+  .loan-bar{height:8px;border-radius:99px;background:#1b2230;overflow:hidden;margin:9px 0}
+  .loan-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#3ddc84,#ffc93c);transition:width .4s ease}
+  .loan-pay{margin-top:9px;width:100%;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,201,60,.45);background:linear-gradient(180deg,#2a2410,#191508);color:var(--gold);font-family:inherit;font-weight:900;font-size:13px;cursor:pointer;transition:transform .12s ease,filter .12s ease}
+  .loan-pay:hover{filter:brightness(1.14)}
+  .loan-pay:active{transform:translateY(1px)}
+  .loan-pay.off{opacity:.62;cursor:not-allowed;border-color:#313c50;color:var(--muted);filter:none}
   .mult-wrap{background:#0f141d;border:1px solid var(--line);border-radius:12px;padding:12px 12px 8px;margin-bottom:12px;text-align:left;}
   .mult-head{display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;}
   .mult-head b{color:var(--gold);font-size:14.5px;font-weight:900}
@@ -268,6 +281,34 @@
   ::-webkit-scrollbar-corner{background:#0e121a}
   ::-webkit-scrollbar-button{display:none;width:0;height:0}
   @supports (-moz-appearance:none){*{scrollbar-width:thin;scrollbar-color:#3b4864 #0e121a}}
+  /* ===== единый слой полировки интерфейса ===== */
+  :focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:10px}
+  button,input,select,textarea{font-family:inherit}
+  button{transition:filter .15s ease,transform .12s ease,border-color .15s ease,box-shadow .15s ease}
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+  .balance,.stat b,.cost,.price,.loan-sum{font-variant-numeric:tabular-nums}
+  .stat{transition:border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+  .stat:hover{border-color:#3a4660;transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .card,.skin-card,.loan-card{will-change:transform}
+  .card:hover,.skin-card:hover{box-shadow:0 10px 26px rgba(0,0,0,.4)}
+  .section-title{color:#9aa7bd}
+  .section-title::before{content:'▍';color:var(--gold);margin-right:6px}
+  .wrap{max-width:820px}
+  @media(max-width:520px){
+    .tabs{grid-template-columns:repeat(2,1fr);gap:7px}
+    .tab{min-height:62px;border-radius:14px}
+    .tab .ti{font-size:21px}
+    .tab .tl{font-size:11.5px}
+    .wrap{padding:12px 10px 0}
+    .stats{gap:6px}
+    .stat{min-width:88px;padding:6px 10px}
+    header{padding:9px 10px;gap:8px}
+    .balance{font-size:14px;padding:6px 11px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms !important;transition-duration:.001ms !important}
+  }
 </style>
 <link rel="stylesheet" href="online.css">
 <!-- Сайтовая (браузерная) версия: адрес онлайн-сервера ищется в server.txt
@@ -425,7 +466,7 @@ window.VC_PLATFORM = window.VC_PLATFORM || 'web';
 
     <div class="loan-box">
       <h2>🏦 КРЕДИТ</h2>
-      <div class="sub">До 1 триллиона. Только один. До 5 часов. +1%/час</div>
+      <div class="sub">До 1 триллиона. Только один. До 5 часов. +1%/час. Досрочно — в любой момент: проценты только за использованное время.</div>
       <input type="number" id="loanAmount" class="bet-input" value="1000000" min="1000" step="1000">
       <input type="number" id="loanHours" class="bet-input" value="1" min="1" max="5" step="1" placeholder="Часов (1-5)">
       <button class="spin-btn" id="loanBtn">ВЗЯТЬ КРЕДИТ</button>
@@ -1785,6 +1826,8 @@ $cover.addEventListener('contextmenu', e => e.preventDefault());
 
 /* ---------- ОБРАБОТКА КЛИКОВ ---------- */
 document.body.addEventListener('click', e => {
+  const lp = e.target.closest('[data-loan]');
+  if (lp) { payLoanEarly(Number(lp.dataset.loan)); return; }
   const card = e.target.closest('[data-upgrade]');
   if (card) {
     const id = card.dataset.upgrade;
@@ -1922,6 +1965,13 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (name === 'more') renderMore();
   });
 });
+
+/* пока открыт раздел «Ещё», срок кредита и сумма к возврату тикают раз в секунду */
+setInterval(() => {
+  const p = document.getElementById('panel-more');
+  if (!p || !p.classList.contains('active') || document.hidden) return;
+  if (state.loans.length) tickLoans();
+}, 1000);
 
 /* ---------- КАЗИНО ---------- */
 const $drums = [document.getElementById('drum1'), document.getElementById('drum2'), document.getElementById('drum3')];
@@ -2218,9 +2268,15 @@ function processLoans() {
     const hours = (now - l.startTime) / 3600000;
     l.owed = loanOwed(l, now);
     if (hours >= l.hours) {
-      const need = l.owed; const have = totalMoney();
+      const need = Math.max(0, Math.floor(l.owed));
+      const have = totalMoney();
       if (have >= need) { spendMoney(need); l.paid = true; }
-      else { spendMoney(have); l.owed = need - have; l.startTime = now; l.hours = 1; }
+      else {
+        /* не хватило: списываем всё, остаток долга становится новым телом кредита */
+        if (have > 0) spendMoney(have);
+        const left = Math.max(1, Math.floor(need - have));
+        l.amount = left; l.owed = left; l.startTime = now; l.hours = 1;
+      }
     }
   }
   state.loans = state.loans.filter(l => !l.paid);
@@ -2236,6 +2292,27 @@ document.getElementById('loanBtn').addEventListener('click', () => {
   toast(`🏦 Кредит: 🪙 ${fmt(amount)} на ${hours}ч`);
   renderMore(); updateBalance(); save();
 });
+
+/* Досрочное погашение: платим остаток долга с процентами за уже прошедшее
+   время — переплаты за неиспользованные часы нет. */
+async function payLoanEarly(i) {
+  const l = state.loans[i];
+  if (!l || l.paid) return;
+  const owed = Math.max(0, Math.floor(loanOwed(l, Date.now())));
+  const have = totalMoney();
+  const ok = await (typeof window.vcConfirm === 'function'
+    ? window.vcConfirm('💸 Погасить кредит досрочно?', `Основной долг 🪙 ${fmt(l.amount)}, вернуть сейчас 🪙 ${fmt(owed)} — проценты только за использованное время.`, { okText: 'Погасить' })
+    : Promise.resolve(confirm(`Погасить кредит за 🪙 ${fmt(owed)}?`)));
+  if (!ok) return;
+  if (totalMoney() < owed) { toast(`Не хватает 🪙 ${fmt(owed - totalMoney())}`); return; }
+  if (!spendMoney(owed)) return;
+  l.paid = true;
+  state.loans = state.loans.filter(x => x !== l);
+  toast(`✅ Кредит погашен: 🪙 ${fmt(owed)}`);
+  renderMore(); updateBalance(); updateStatsUI();
+  try { checkAchievements(); } catch (e) { }
+  save();
+}
 
 /* ---------- ПРОМОКОДЫ ---------- */
 function clearAllStats() { const fresh = freshState(); for (const k in fresh) state[k] = fresh[k]; }
@@ -2281,13 +2358,62 @@ function renderMore() {
     const totalGarden = ACHS.filter(a => a.id.startsWith('g_')).length;
     $a.innerHTML = `<div style="margin-bottom:8px;color:#8792a6;font-size:12px">Всего: <b style="color:#ffc93c">${done}</b> / ${total} · Основные: ${doneMain}/${totalMain} · Сад: ${doneGarden}/${totalGarden}</div>` + ACHS.map(a => `<div class="ach-card ${state.achievements[a.id]?'done':''}"><div><span class="em">${a.emoji}</span> <b>${a.name}</b><div style="color:#8792a6;font-size:11px">${a.desc}</div></div><div>${state.achievements[a.id]?'✅':'—'}</div></div>`).join('');
   }
-  const $l = document.getElementById('loanList');
-  if (!state.loans.length) $l.innerHTML = '<div style="color:#8792a6">Активных кредитов нет</div>';
-  else {
-    const now = Date.now();
-    $l.innerHTML = state.loans.map(l => { const hours = (now - l.startTime) / 3600000; const left = Math.max(0, l.hours - hours); const owed = loanOwed(l, now); return `<div class="gpu-card"><div>Взято: 🪙 ${fmt(l.amount)} на ${l.hours}ч</div><div>Осталось: ${left.toFixed(2)}ч · Долг: 🪙 ${fmt(owed)}</div></div>`; }).join('');
-  }
+  renderLoans();
   renderWorks();
+}
+
+/* список кредитов перерисовывается отдельно: пока раздел открыт, срок и долг
+   обновляются каждую секунду, не трогая остальные блоки «Ещё» */
+function renderLoans() {
+  const $l = document.getElementById('loanList');
+  if (!$l) return;
+  if (!state.loans.length) { $l.innerHTML = '<div class="loan-empty">Активных кредитов нет — можно взять новый</div>'; return; }
+  const now = Date.now();
+  $l.innerHTML = state.loans.map((l, i) => {
+    const hours = (now - l.startTime) / 3600000;
+    const left = Math.max(0, l.hours - hours);
+    const owed = Math.max(0, Math.floor(loanOwed(l, now)));
+    const have = totalMoney();
+    const can = have >= owed;
+    const pct = Math.max(0, Math.min(100, l.hours > 0 ? (left / l.hours) * 100 : 0));
+    const btn = can
+      ? `<button class="loan-pay" data-loan="${i}">💸 Погасить досрочно</button>`
+      : `<button class="loan-pay off" data-loan="${i}" title="Не хватает 🪙 ${fmt(owed - have)}">🔒 Не хватает 🪙 ${fmt(owed - have)}</button>`;
+    return `<div class="loan-card" data-loan-card="${i}">
+        <div class="loan-row"><span>Основной долг: <b>🪙 ${fmt(l.amount)}</b></span><span class="loan-left">${left > 0 ? 'осталось ' + left.toFixed(2) + ' ч' : 'срок истёк'}</span></div>
+        <div class="loan-bar"><i style="width:${pct.toFixed(1)}%"></i></div>
+        <div class="loan-row"><span>К возврату: <b class="loan-sum">🪙 ${fmt(owed)}</b></span>${btn}</div>
+      </div>`;
+  }).join('');
+}
+
+/* обновление текста без перерисовки кнопок: иначе клик может «съедаться»,
+   если DOM меняется между нажатием и отпусканием мыши */
+function tickLoans() {
+  const $l = document.getElementById('loanList');
+  if (!$l || !state.loans.length) return;
+  const now = Date.now();
+  state.loans.forEach((l, i) => {
+    const card = $l.querySelector('[data-loan-card="' + i + '"]');
+    if (!card) return;
+    const hours = (now - l.startTime) / 3600000;
+    const left = Math.max(0, l.hours - hours);
+    const owed = Math.max(0, Math.floor(loanOwed(l, now)));
+    const have = totalMoney();
+    const leftEl = card.querySelector('.loan-left');
+    if (leftEl) leftEl.textContent = left > 0 ? 'осталось ' + left.toFixed(2) + ' ч' : 'срок истёк';
+    const sumEl = card.querySelector('.loan-sum');
+    if (sumEl) sumEl.textContent = '🪙 ' + fmt(owed);
+    const bar = card.querySelector('.loan-bar i');
+    if (bar) bar.style.width = Math.max(0, Math.min(100, l.hours > 0 ? (left / l.hours) * 100 : 0)).toFixed(1) + '%';
+    const btn = card.querySelector('.loan-pay');
+    if (btn) {
+      const can = have >= owed;
+      btn.classList.toggle('off', !can);
+      btn.textContent = can ? '💸 Погасить досрочно' : '🔒 Не хватает 🪙 ' + fmt(owed - have);
+      if (can) btn.removeAttribute('title'); else btn.title = 'Не хватает 🪙 ' + fmt(owed - have);
+    }
+  });
 }
 
 /* ============================================================

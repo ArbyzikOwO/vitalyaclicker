@@ -329,3 +329,24 @@
 .ol-gate-msg{font-size:12.5px;font-weight:700;color:var(--muted);min-height:18px;margin-top:12px;line-height:1.45}
 .ol-msg .bot{color:#7ee0c0}
 .ol-msg.botsay{background:rgba(126,224,192,.05);border-radius:12px}
+
+/* ===== полировка онлайн-раздела ===== */
+.ol-subtabs{scrollbar-width:none}
+.ol-subtabs::-webkit-scrollbar{display:none}
+.ol-item,.ol-box{transition:border-color .15s ease,box-shadow .15s ease}
+.ol-box:hover{border-color:#303b4f}
+.ol-msg{transition:background .15s ease}
+.ol-msg:hover{background:#18202f}
+.ol-msg.mine:hover{background:#31290f}
+.ol-chatlog{gap:6px;overscroll-behavior:contain}
+.ol-btn,.ol-mini,.ol-subtab{user-select:none}
+.ol-gate-card{animation:olGateIn .22s ease}
+@keyframes olGateIn{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+@media(max-width:520px){
+  .ol-subtabs{flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}
+  .ol-subtab{flex:0 0 auto;min-width:78px}
+  .ol-box{padding:14px 12px;border-radius:16px}
+  .ol-chatlog{height:min(52vh,320px)}
+  .ol-head{padding:10px 12px}
+  .ol-msg{max-width:96%}
+}

@@ -773,7 +773,7 @@ function cardsResultHtml(g) {
     const w = (g.finished || [])[0];
     extra = (w != null ? `<div class="ol-sub-note">🏆 Банк забирает <b>${esc(g.names[w])}</b> — скинул(а) все карты первым(ой).</div>` : '')
       + (g.durak >= 0 ? `<div class="ol-sub-note">🃏 Дурак: <b>${esc(g.names[g.durak])}</b></div>` : '')
-      + ((g.gone || []).some(Boolean) ? '<div class="ol-sub-note">🚪 Часть игроков вышла из партии — их ставки остались в банке.</div>' : '');
+      + ((g.gone || []).some(Boolean) && !g.forfeit ? '<div class="ol-sub-note">🚪 Часть игроков вышла из партии — их ставки остались в банке.</div>' : '');
   }
   else if (g.game === 'war') {
     const w = (g.winners || []);
@@ -783,6 +783,7 @@ function cardsResultHtml(g) {
   }
   else if (g.game === 'cheat' && g.winner >= 0) extra = `<div class="ol-sub-note">🏆 ${esc(g.names[g.winner])} первым(ой) скинул(а) все карты.</div>`;
   else if (g.game === 'poker' && g.showdown) extra = g.showdown.map(s => `<div class="ol-sub-note">${cardsWho(s.i, g)}: ${esc(s.cards)} — ${esc(s.name)}</div>`).join('');
+  if (g.forfeit) extra = `<div class="ol-sub-note">🚪 <b>${esc(g.forfeit)}</b> вышел(ла) из партии — раунд завершён, ставка досталась остальным.</div>` + extra;
   const head = g.money && g.money[g.you] > g.stake ? '🏆 Победа! +🪙 ' + F(g.money[g.you] - g.stake)
     : g.money && g.money[g.you] === g.stake ? '🤝 Ничья — ставка возвращена'
       : '😵 Проигрыш −🪙 ' + F(g.stake - (g.money ? g.money[g.you] : 0));
@@ -960,7 +961,7 @@ function renderCardsList(d) {
       <select class="ol-in" id="cardsTurn" style="flex:0 0 150px" data-act="cardopt" data-k="turnMs">${turnSel}</select>
       <button class="ol-btn" data-act="cards-create">➕ Создать стол</button></div>
     ${dur}
-    <div class="ol-sub-note" style="margin-top:8px">В партии можно выйти в любой момент — ставка при этом не возвращается. Если игрок отключился, сервер доиграет его ход.</div></div>
+    <div class="ol-sub-note" style="margin-top:8px">Выход из партии сразу завершает раунд: вышедший теряет ставку, остальные получают свою ставку и его ставку поровну. Если игрок отключился, сервер доиграет его ход.</div></div>
     <div class="ol-box"><h3>${CARDS_EMOJI[sel] || ''} ${esc(g.title)} · открытые столы</h3><div class="ol-list">${mine.length ? mine.map(r => `<div class="ol-item"><span class="grow"><b>${esc(r.owner)}</b> · 🪙 ${F(r.bet)} · ${r.players}/${r.max}${r.game === 'durak' ? ' · ' + (Number(r.opts && r.opts.deck) === 52 ? '52' : '36') + ' карт' + (r.opts && r.opts.transfer === false ? ', без перевода' : '') : ''} · ⏱ ${cardsTurnLabel(r.turnMs)}</span><span class="acts">${r.players >= r.max ? '<span class="ol-dim">заполнен</span>' : `<button class="ol-btn" style="padding:7px 14px" data-act="cards-join" data-id="${esc(r.id)}">Сесть</button>`}</span></div>`).join('') : '<div class="ol-empty">Столов нет — создайте свой!</div>'}</div></div>`;
 }
 function renderCards() {
@@ -1976,7 +1977,7 @@ async function onClick(e) {
     case 'cards-start': return netCall('card.start', {}).then(() => pullWallet());
     case 'cards-leave': return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
     case 'cards-quit': {
-      if (!(await askConfirm('🃏 Выйти из партии?', 'Ставка не возвращается — она останется в банке. Вместо вас ход будет пропускаться.', { okText: 'Выйти' }))) return;
+      if (!(await askConfirm('🃏 Выйти из партии?', 'Раунд сразу завершится: ваша ставка достанется остальным игрокам. Вернуться в эту раздачу нельзя.', { okText: 'Выйти' }))) return;
       return netCall('card.leave').then(() => { cards.room = null; cards.game = null; cards.pick = []; refreshCards(); pullWallet(); });
     }
     case 'cards-close': cards.room = null; cards.game = null; cards.pick = []; return refreshCards().then(pullWallet);
