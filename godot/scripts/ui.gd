@@ -23,6 +23,7 @@ var _click_lbl: Label
 var _skin_lbl: Label
 var _skin_btn: Button
 var _tab_bar: GridContainer
+var _tab_btns: Dictionary = {}
 var _content: VBoxContainer
 var _scroll: ScrollContainer
 var _toast_box: VBoxContainer
@@ -36,6 +37,7 @@ var _news_tick := 0.0
 var _side := -1.0
 
 var net: VCNet
+var social: VCSocial
 var _gate: Control
 var _gate_status: Label
 var _gate_name: LineEdit
@@ -56,7 +58,10 @@ func _ready() -> void:
 	game.load_game()   # локальный кэш; облако при входе важнее
 	net = VCNet.new()
 	net.link_changed.connect(_on_link_changed)
+	net.pushed.connect(_on_push)
 	add_child(net)
+	social = VCSocial.new()
+	social.setup(self, net, game)
 	_build_theme()
 	_build_ui()
 	_gate = _build_gate()
@@ -64,6 +69,9 @@ func _ready() -> void:
 	_root.visible = false
 	_shown_money = game.total_money()
 	_show_tab("click")
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--peer=") and social != null:
+			social.pending_peer = a.substr(7)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--tab="):
 			_show_tab(a.substr(6))
@@ -109,6 +117,8 @@ func _process(delta: float) -> void:
 	_animate_money(delta)
 	_resize_content()
 	_sync_check(delta)
+	if social != null:
+		social.tick(delta)
 
 func _animate_money(delta: float) -> void:
 	var target := game.total_money()
@@ -155,6 +165,24 @@ func _build_theme() -> void:
 	th.set_stylebox("focus", "LineEdit", _sbox(Color("0b101c"), GOLD, 1, 10))
 	th.set_color("font_color", "LineEdit", TEXT)
 	th.set_color("font_placeholder_color", "LineEdit", Color(MUTED, 0.7))
+
+	var ob := _sbox(Color("0b101c"), LINE, 1, 10)
+	th.set_stylebox("normal", "OptionButton", ob)
+	th.set_stylebox("hover", "OptionButton", _sbox(Color("0b101c"), Color(GOLD, 0.65), 1, 10))
+	th.set_stylebox("pressed", "OptionButton", _sbox(CARD.darkened(0.15), GOLD, 1, 10))
+	th.set_stylebox("focus", "OptionButton", _sbox(Color(0, 0, 0, 0), GOLD, 1, 10))
+	th.set_stylebox("disabled", "OptionButton", _sbox(CARD2, Color(LINE, 0.55), 1, 10))
+	th.set_color("font_color", "OptionButton", TEXT)
+	th.set_color("font_hover_color", "OptionButton", GOLD_SOFT)
+	th.set_color("font_pressed_color", "OptionButton", GOLD)
+	th.set_color("font_focus_color", "OptionButton", TEXT)
+	th.set_font_size("font_size", "OptionButton", 12)
+	th.set_stylebox("panel", "PopupMenu", _sbox(CARD, Color(GOLD, 0.35), 1, 12, true))
+	th.set_stylebox("hover", "PopupMenu", _sbox(CARD.lightened(0.08), Color(GOLD, 0.6), 1, 8))
+	th.set_color("font_color", "PopupMenu", TEXT)
+	th.set_color("font_hover_color", "PopupMenu", GOLD_SOFT)
+	th.set_color("font_disabled_color", "PopupMenu", MUTED)
+	th.set_font_size("font_size", "PopupMenu", 12)
 
 	th.set_stylebox("panel", "PanelContainer", _sbox(CARD, LINE, 1, 18, true))
 
@@ -220,6 +248,7 @@ func _label(text: String, size := 14, color := TEXT, wrap := false) -> Label:
 	if wrap:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
 func _glow_label(l: Label, color: Color, size := 2) -> void:
@@ -234,12 +263,14 @@ func _button(text: String, size := 14, color := TEXT) -> Button:
 	b.add_theme_font_size_override("font_size", size)
 	b.add_theme_color_override("font_color", color)
 	b.custom_minimum_size = Vector2(0, 40)
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	return b
 
 func _card(border := LINE, radius := 18) -> PanelContainer:
 	var p := PanelContainer.new()
 	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	p.add_theme_stylebox_override("panel", _sbox(CARD, border, 1, radius, true))
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	return p
 
 func _pill(text: String, color := TEXT) -> PanelContainer:
@@ -248,23 +279,27 @@ func _pill(text: String, color := TEXT) -> PanelContainer:
 	sb.set_content_margin_all(5)
 	p.add_theme_stylebox_override("panel", sb)
 	p.add_child(_label(text, 10.5, color))
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	return p
 
 func _row(sep := 8) -> HBoxContainer:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", sep)
 	h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.mouse_filter = Control.MOUSE_FILTER_PASS
 	return h
 
 func _vbox(sep := 8) -> VBoxContainer:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", sep)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
 	return v
 
 func _spacer() -> Control:
 	var c := Control.new()
 	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c.mouse_filter = Control.MOUSE_FILTER_PASS
 	return c
 
 func _toast(text: String) -> void:
@@ -364,20 +399,22 @@ func _build_ui() -> void:
 	_skin_btn.resized.connect(func() -> void: _skin_btn.pivot_offset = _skin_btn.size * 0.5)
 	_root.add_child(_skin_btn)
 
-	# вкладки: сетка 3×2 — на узком экране в один ряд не влезают
+	# вкладки: сетка 4×2 — на узком экране в один ряд не влезают
 	_tab_bar = GridContainer.new()
-	_tab_bar.columns = 3
+	_tab_bar.columns = 4
 	_tab_bar.add_theme_constant_override("h_separation", 6)
 	_tab_bar.add_theme_constant_override("v_separation", 6)
 	_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_root.add_child(_tab_bar)
-	for t in [["click", "👆 Клик"], ["up", "📈 Апгрейды"], ["skins", "🎨 Скины"],
-			["casino", "🎰 Казино"], ["crypto", "💎 Крипта"], ["more", "📦 Ещё"]]:
+	for t in [["click", "👆 Клик"], ["up", "📈 Апгрейды"], ["skins", "🎨 Скины"], ["casino", "🎰 Казино"],
+			["crypto", "💎 Крипта"], ["chat", "💬 Чат"], ["friends", "👥 Друзья"], ["more", "📦 Ещё"]]:
 		var b := _button(String(t[1]), 12)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.custom_minimum_size = Vector2(0, 42)
+		b.clip_text = true
 		b.pressed.connect(_show_tab.bind(String(t[0])))
 		_tab_bar.add_child(b)
+		_tab_btns[String(t[0])] = b
 
 	# контент
 	_scroll = ScrollContainer.new()
@@ -412,6 +449,7 @@ func _stat_pill(caption: String, color: Color) -> PanelContainer:
 	var sb := _sbox(Color(color, 0.07), Color(color, 0.20), 1, 12)
 	sb.set_content_margin_all(8)
 	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_PASS
 	var v := _vbox(1)
 	var val := _label("0", 15, color)
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -433,7 +471,16 @@ func _update_header() -> void:
 		_stat_vals[1].text = VCGame.fmt(game.per_click())
 	if _skin_val_lbl:
 		_skin_val_lbl.text = nm
-		_skin_val_lbl.add_theme_font_size_override("font_size", 12 if nm.length() > 11 else 14)
+		var fs := 14
+		if nm.length() > 16:
+			fs = 9
+		elif nm.length() > 13:
+			fs = 10
+		elif nm.length() > 10:
+			fs = 11
+		elif nm.length() > 8:
+			fs = 12
+		_skin_val_lbl.add_theme_font_size_override("font_size", fs)
 	if _skin_btn:
 		_skin_btn.text = "🪙  КЛИК\n+" + VCGame.fmt(game.per_click()) + " за клик"
 
@@ -488,9 +535,20 @@ func _show_tab(tab: String) -> void:
 			b.add_theme_color_override("font_hover_color", GOLD_SOFT)
 		i += 1
 	_rebuild()
+	if social != null:
+		if tab == "chat":
+			social.on_show_chat()
+		elif tab == "friends":
+			social.refresh_friends()
 
 func _tab_index(tab: String) -> int:
-	return ["click", "up", "skins", "casino", "crypto", "more"].find(tab)
+	return ["click", "up", "skins", "casino", "crypto", "chat", "friends", "more"].find(tab)
+
+func _set_chat_badge(n: int) -> void:
+	var b: Button = _tab_btns.get("chat")
+	if b == null:
+		return
+	b.text = "💬 Чат" + ("•" if n > 0 else "")
 
 func _rebuild() -> void:
 	for c in _content.get_children():
@@ -502,6 +560,8 @@ func _rebuild() -> void:
 		"skins": _build_skins()
 		"casino": _build_casino()
 		"crypto": _build_crypto()
+		"chat": _build_chat()
+		"friends": _build_friends()
 		"more": _build_more()
 	_update_header()
 	if _scroll:
@@ -872,6 +932,7 @@ func _build_casino() -> void:
 	bet_row.add_child(_label("Ставка", 13, TEXT))
 	_bet_input = LineEdit.new()
 	_bet_input.text = "1000"
+	_bet_input.mouse_filter = Control.MOUSE_FILTER_PASS
 	_bet_input.placeholder_text = "ставка"
 	_bet_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bet_row.add_child(_bet_input)
@@ -1032,6 +1093,7 @@ func _build_crypto() -> void:
 		var row := _row(6)
 		var qty := LineEdit.new()
 		qty.text = "1"
+		qty.mouse_filter = Control.MOUSE_FILTER_PASS
 		qty.custom_minimum_size = Vector2(70, 0)
 		row.add_child(qty)
 		var buy := _button("Купить", 12)
@@ -1201,6 +1263,16 @@ func _on_maxim_toggle() -> void:
 # ── ЕЩЁ: КРЕДИТЫ, ДОСТИЖЕНИЯ, НОВОСТИ ─────────────────────────────────────────
 var _loan_refresh: Callable
 
+func _build_chat() -> void:
+	if social == null:
+		return
+	social.build_chat(_content)
+
+func _build_friends() -> void:
+	if social == null:
+		return
+	social.build_friends(_content)
+
 func _build_more() -> void:
 	_content.add_child(_label("АККАУНТ", 13, GOLD))
 	var acc_card := _card(Color(GOLD, 0.22))
@@ -1209,6 +1281,9 @@ func _build_more() -> void:
 		acc_v.add_child(_label("👤 " + net.user_name, 17, TEXT))
 		acc_v.add_child(_label("Сервер: %s" % net.base, 10.5, MUTED, true))
 		acc_v.add_child(_label("Облако: rev %d · автосинк каждые 10 секунд" % _cloud_rev, 10.5, MUTED, true))
+		if social != null:
+			acc_v.add_child(_label("В кошельке: 🪙 %s · друзей: %d" % [
+				VCGame.fmt(social.avail), (social.friends.get("friends", []) as Array).size()], 10.5, MUTED, true))
 		var ar := _row(6)
 		var sy := _button("🔄 Синхронизировать", 12)
 		sy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1231,10 +1306,12 @@ func _build_more() -> void:
 	var row := _row(6)
 	var amount := LineEdit.new()
 	amount.text = "1000000"
+	amount.mouse_filter = Control.MOUSE_FILTER_PASS
 	amount.placeholder_text = "сумма"
 	amount.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hours := LineEdit.new()
 	hours.text = "1"
+	hours.mouse_filter = Control.MOUSE_FILTER_PASS
 	hours.placeholder_text = "часы"
 	hours.custom_minimum_size = Vector2(70, 0)
 	row.add_child(amount)
@@ -1495,9 +1572,13 @@ func _begin_play() -> void:
 		_toast("⏳ Оффлайн: +%s монет за %d мин" % [VCGame.fmt(game.per_sec() * off), int(off / 60.0)])
 	if net != null and net.authed:
 		_toast("👤 " + net.user_name + " · облако подключено")
+	if social != null and net != null and net.authed:
+		social.on_login()
 
 func _sync_check(delta: float) -> void:
 	if net == null or not net.authed or _pushing or _conflict_open:
+		return
+	if social != null and social.wallet_busy:
 		return
 	_cloud_tick += delta
 	if _cloud_tick < 10.0:
@@ -1506,15 +1587,20 @@ func _sync_check(delta: float) -> void:
 	if game.cloud_digest() != _last_digest:
 		_push_cloud(false)
 
-func _push_cloud(force: bool) -> Dictionary:
+func _push_cloud(force: bool, ack: Array = []) -> Dictionary:
 	if _pushing:
 		return { "ok": false, "err": "busy" }
 	_pushing = true
-	var r := await net.save_put(game.to_cloud(), _cloud_rev, force)
+	var ids := ack.duplicate()
+	var r := await net.save_put(game.to_cloud(), _cloud_rev, force, ids)
 	_pushing = false
 	if bool(r.get("ok", false)):
 		_cloud_rev = int(r.get("rev", _cloud_rev))
 		_last_digest = game.cloud_digest()
+		if social != null:
+			social.on_saved(r)
+			if not ids.is_empty():
+				social.ack_done(ids)
 		return r
 	if String(r.get("err", "")) == "conflict":
 		_show_conflict()
@@ -1581,6 +1667,8 @@ func _on_logout() -> void:
 		_toast("Сначала решите, какое сохранение оставить")
 		return
 	net.forget()
+	if social != null:
+		social.on_logout()
 	game.new_game()
 	game.save()
 	_playing = false
@@ -1636,6 +1724,10 @@ func _on_link_changed(ok: bool, text: String) -> void:
 	if now - _link_err_at > 30000.0:
 		_link_err_at = now
 		_toast("⚠️ " + text)
+
+func _on_push(m: Dictionary) -> void:
+	if social != null:
+		social.on_push(m)
 
 func _has_progress(g: VCGame) -> bool:
 	return int(g.s.get("clicks", 0)) > 0 or g.total_money() > 0.0 or not (g.s["upgrades"] as Dictionary).is_empty()

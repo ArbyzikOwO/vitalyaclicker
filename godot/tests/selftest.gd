@@ -6,7 +6,7 @@ var fails := 0
 var passes := 0
 var _ui: Node = null
 var _frame := 0
-var _tabs := ["up", "skins", "casino", "crypto", "more", "click"]
+var _tabs := ["up", "skins", "casino", "crypto", "chat", "friends", "more", "click"]
 var _ui_fail := 0
 
 func ok(name: String, cond: bool, detail := "") -> void:
@@ -32,6 +32,7 @@ func _initialize() -> void:
 	test_cloud_bin()
 	test_offline()
 	test_fmt()
+	test_social()
 
 	print("── UI ──")
 	_ui = load("res://scenes/main.tscn").instantiate()
@@ -362,3 +363,26 @@ func test_fmt() -> void:
 	ok("fmt_mult 1", VCGame.fmt_mult(1.0) == "1")
 	ok("fmt_mult 1.5", VCGame.fmt_mult(1.5) == "1.5")
 	ok("fmt_chance", VCGame.fmt_chance(0.25) == "25.00%", VCGame.fmt_chance(0.25))
+
+func test_social() -> void:
+	print("── ЧАТ, ДРУЗЬЯ, ПЕРЕВОДЫ ──")
+	ok("сумма 5K", close(VCSocial.parse_amount("5K"), 5000.0))
+	ok("сумма 2.5M", close(VCSocial.parse_amount("2.5M"), 2.5e6))
+	ok("сумма 1B", close(VCSocial.parse_amount("1B"), 1e9))
+	ok("сумма 3T", close(VCSocial.parse_amount("3T"), 3e12))
+	ok("сумма 1к", close(VCSocial.parse_amount("1к"), 1000.0))
+	ok("сумма с пробелом", close(VCSocial.parse_amount(" 10 M "), 1e7))
+	ok("сумма с запятой", close(VCSocial.parse_amount("2,5M"), 2.5e6))
+	ok("пустая сумма", VCSocial.parse_amount("") == 0.0)
+	ok("мусор в сумме", VCSocial.parse_amount("abc") == 0.0)
+	ok("нулевая сумма", VCSocial.parse_amount("0") == 0.0)
+	ok("неизвестный суффикс", VCSocial.parse_amount("5zz") == 0.0)
+	ok("bbcode открытая скобка", VCSocial.bbcode_escape("[b]x") == "[lb]b]x", VCSocial.bbcode_escape("[b]x"))
+	var so := VCSocial.new()
+	so.setup(null, null, null)
+	ok("ключ чата без регистра", so.key(" GodotQA ") == "godotqa", so.key(" GodotQA "))
+	var merged: Array = so._merge_msgs(
+		[{ "id": "a", "text": "старое" }, { "id": "b", "text": "новое" }],
+		[{ "id": "a", "text": "из истории" }])
+	ok("история чата склеена", merged.size() == 2 and String(merged[0]["text"]) == "из истории")
+	ok("новое сообщение не потеряно", String(merged[1]["id"]) == "b")

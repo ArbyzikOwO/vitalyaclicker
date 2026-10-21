@@ -14,6 +14,8 @@ extends Node
 ## user://session.json. После выхода из аккаунта токен стирается.
 
 signal link_changed(ok: bool, text: String)
+## Серверные push-сообщения (чат, друзья, кошелёк) — без поля re.
+signal pushed(msg: Dictionary)
 
 const SESSION_PATH := "user://session.json"
 const SESSION_SEC := 7 * 24 * 3600
@@ -189,7 +191,12 @@ func poll() -> void:
 		var pkt := ws.get_packet()
 		var parsed: Variant = JSON.parse_string(pkt.get_string_from_utf8())
 		if typeof(parsed) == TYPE_DICTIONARY:
-			_inbox.append(parsed)
+			var m: Dictionary = parsed
+			# ответы на запросы ждут в _inbox, остальное — серверные события
+			if m.has("re"):
+				_inbox.append(m)
+			else:
+				pushed.emit(m)
 
 func connect_ws(timeout_ms := 8000) -> bool:
 	if ws != null:
@@ -288,11 +295,33 @@ func save_get() -> Dictionary:
 		garden = r["garden"]
 	return r
 
-func save_put(bytes: PackedByteArray, base_rev: int, force := false) -> Dictionary:
-	return await request("save.put", {
+func save_put(bytes: PackedByteArray, base_rev: int, force := false, ack: Array = []) -> Dictionary:
+	var body := {
 		"main": Marshalls.raw_to_base64(bytes),
 		"garden": garden,
 		"baseRev": base_rev,
 		"force": force,
 		"device": device,
-	})
+	}
+	if not ack.is_empty():
+		body["ack"] = ack
+	return await request("save.put", body)
+
+# ── кошелёк, чат и друзья (протокол веб-версии) ──────────────────────────────
+func wallet_pending() -> Dictionary:
+	return await request("wallet.pending")
+
+func wallet_history() -> Dictionary:
+	return await request("wallet.history")
+
+func transfer(to: String, amount: float) -> Dictionary:
+	return await request("transfer", { "to": to, "amount": amount })
+
+func chat_history(args: Dictionary) -> Dictionary:
+	return await request("chat.history", args)
+
+func chat_send(args: Dictionary) -> Dictionary:
+	return await request("chat.send", args)
+
+func friends_list() -> Dictionary:
+	return await request("friends.list")
