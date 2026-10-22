@@ -7,6 +7,8 @@ class_name VCGame
 var save_path := "user://save_v24.json"
 
 var s: Dictionary = {}
+## Сад (sad_data.bin). Может быть null в тестах и до входа в аккаунт.
+var garden: VCGarden = null
 
 func _init() -> void:
 	new_game()
@@ -42,10 +44,16 @@ func new_game() -> void:
 	}
 
 # ── деньги ────────────────────────────────────────────────────────────────────
-func total_money() -> float:
+func main_money() -> float:
 	var t := 0.0
 	for v in s["money"].values():
 		t += float(v)
+	return t
+
+func total_money() -> float:
+	var t := main_money()
+	if garden != null:
+		t += garden.money()
 	return t
 
 func add_money(amount: float, src: String = "auto") -> void:
@@ -53,10 +61,31 @@ func add_money(amount: float, src: String = "auto") -> void:
 		src = "auto"
 	s["money"][src] = float(s["money"][src]) + amount
 
+## Траты основной игры: сначала корзины main, затем (если не хватило) сад.
+## Это совпадает с веб-версией, где totalMoney включает сад.
 func spend(amount: float) -> bool:
 	if amount <= 0.0:
 		return true
-	if total_money() + 1e-9 < amount:
+	var main := main_money()
+	if main + 1e-9 >= amount:
+		return _spend_main(amount)
+	if garden == null:
+		return false
+	var need := amount - main
+	if garden.money() + 1e-9 < need:
+		return false
+	if not _spend_main(main):
+		return false
+	return garden.spend_money_only(need)
+
+## Для сада: потратить строго из main-корзин, не трогая кассу сада.
+func spend_main_only(amount: float) -> bool:
+	return _spend_main(amount)
+
+func _spend_main(amount: float) -> bool:
+	if amount <= 0.0:
+		return true
+	if main_money() + 1e-9 < amount:
 		return false
 	var rem := amount
 	var keys: Array = s["money"].keys()

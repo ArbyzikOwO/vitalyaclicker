@@ -6,7 +6,7 @@ var fails := 0
 var passes := 0
 var _ui: Node = null
 var _frame := 0
-var _tabs := ["up", "skins", "casino", "crypto", "chat", "friends", "games", "more", "click"]
+var _tabs := ["up", "skins", "casino", "crypto", "chat", "friends", "games", "more", "garden", "click"]
 var _ui_fail := 0
 
 func ok(name: String, cond: bool, detail := "") -> void:
@@ -33,6 +33,7 @@ func _initialize() -> void:
 	test_offline()
 	test_fmt()
 	test_social()
+	test_garden()
 
 	print("── UI ──")
 	_ui = load("res://scenes/main.tscn").instantiate()
@@ -386,3 +387,64 @@ func test_social() -> void:
 		[{ "id": "a", "text": "из истории" }])
 	ok("история чата склеена", merged.size() == 2 and String(merged[0]["text"]) == "из истории")
 	ok("новое сообщение не потеряно", String(merged[1]["id"]) == "b")
+
+func test_garden() -> void:
+	print("── САД ──")
+	var g := VCGarden.new()
+	g.persist_local = false
+	ok("сад: версия 24", int(g.data.get("version", 0)) == 24)
+	ok("сад: 10×10", g.garden_size() == 10)
+	ok("сад: касса 0", g.money() == 0.0)
+	g.data["seeds"]["rose"] = 2
+	g.select_plant("rose")
+	ok("сад: посажено", g.plant_at(0, 0))
+	ok("сад: семян осталось 1", g.seed_count("rose") == 1)
+	var c := g.cell_at(0, 0)
+	ok("сад: растёт", String(g.stage(c).get("stage", "")) == "growing")
+	c["plantedAt"] = g.now_ms() - 3600001.0
+	ok("сад: спелое", String(g.stage(c).get("stage", "")) == "mature")
+	ok("сад: собрано", g.harvest_at(0, 0))
+	ok("сад: урожай 1", g.harvested_count("rose") == 1)
+	var got := g.sell_all()
+	ok("сад: продано", got > 0.0)
+	ok("сад: касса пополнилась", g.money() > 0.0)
+	var enc := JSON.stringify(g.data)
+	var dec: Variant = JSON.parse_string(enc)
+	ok("сад: json читается", typeof(dec) == TYPE_DICTIONARY)
+	if typeof(dec) == TYPE_DICTIONARY:
+		ok("сад: поля сохранились", int((dec as Dictionary).get("version", 0)) == 24)
+	g.data["money"] = 1e15
+	var before := g.money()
+	var bought := g.buy_pack("rose")
+	ok("сад: покупка семян", g.seed_count("rose") > 0 and g.money() < before, bought)
+	ok("сад: расширение", g.buy_size().begins_with("🌾") and g.garden_size() == 15)
+	var game := VCGame.new()
+	game.garden = g
+	game.add_money(100.0, "click")
+	ok("сад: общий баланс", close(game.total_money(), game.main_money() + g.money()))
+	var spent := [0.0]
+	var main := [100.0]
+	g.set_wallet(
+		func(x: float) -> bool:
+			spent[0] = float(spent[0]) + x
+			return true,
+		func() -> float: return float(main[0])
+	)
+	g.data["money"] = 50.0
+	ok("сад: трата из кассы", g.spend_total(25.0))
+	ok("сад: касса уменьшилась", close(g.money(), 25.0))
+	g.data["money"] = 20.0
+	spent[0] = 0.0
+	ok("сад: добирает main", g.spend_total(70.0))
+	ok("сад: main списан", close(float(spent[0]), 50.0))
+	game.garden = null
+	var game2 := VCGame.new()
+	var g2 := VCGarden.new()
+	g2.persist_local = false
+	g2.data["money"] = 50.0
+	game2.garden = g2
+	game2.add_money(10.0, "click")
+	ok("сад: main тратит сад", game2.spend(30.0))
+	ok("сад: корзины main пусты", close(game2.main_money(), 0.0))
+	ok("сад: сад оплатил остаток", close(g2.money(), 30.0))
+	game2.garden = null
