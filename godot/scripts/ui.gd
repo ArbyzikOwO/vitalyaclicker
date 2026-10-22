@@ -522,6 +522,9 @@ func _spawn_click_fx() -> void:
 
 func _show_tab(tab: String) -> void:
 	_tab = tab
+	# на вкладке игр большая кнопка клика только мешает: освобождаем место столу
+	if _skin_btn != null:
+		_skin_btn.visible = tab != "games"
 	var i := 0
 	for b in _tab_bar.get_children():
 		var active := i == _tab_index(tab)
