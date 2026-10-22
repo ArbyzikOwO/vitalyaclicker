@@ -6,7 +6,7 @@ var fails := 0
 var passes := 0
 var _ui: Node = null
 var _frame := 0
-var _tabs := ["up", "skins", "casino", "crypto", "chat", "friends", "more", "click"]
+var _tabs := ["up", "skins", "casino", "crypto", "chat", "friends", "games", "more", "click"]
 var _ui_fail := 0
 
 func ok(name: String, cond: bool, detail := "") -> void:

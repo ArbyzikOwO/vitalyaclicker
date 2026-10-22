@@ -38,6 +38,7 @@ var _side := -1.0
 
 var net: VCNet
 var social: VCSocial
+var play: VCPlay
 var _gate: Control
 var _gate_status: Label
 var _gate_name: LineEdit
@@ -62,6 +63,8 @@ func _ready() -> void:
 	add_child(net)
 	social = VCSocial.new()
 	social.setup(self, net, game)
+	play = VCPlay.new()
+	play.setup(self, net, game)
 	_build_theme()
 	_build_ui()
 	_gate = _build_gate()
@@ -72,6 +75,9 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--peer=") and social != null:
 			social.pending_peer = a.substr(7)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--hub=") and play != null:
+			play.hub = a.substr(6)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--tab="):
 			_show_tab(a.substr(6))
@@ -119,6 +125,8 @@ func _process(delta: float) -> void:
 	_sync_check(delta)
 	if social != null:
 		social.tick(delta)
+	if play != null:
+		play.tick(delta)
 
 func _animate_money(delta: float) -> void:
 	var target := game.total_money()
@@ -399,15 +407,15 @@ func _build_ui() -> void:
 	_skin_btn.resized.connect(func() -> void: _skin_btn.pivot_offset = _skin_btn.size * 0.5)
 	_root.add_child(_skin_btn)
 
-	# вкладки: сетка 4×2 — на узком экране в один ряд не влезают
+	# вкладки: сетка 3×3 — девять разделов и место для подписей
 	_tab_bar = GridContainer.new()
-	_tab_bar.columns = 4
+	_tab_bar.columns = 3
 	_tab_bar.add_theme_constant_override("h_separation", 6)
 	_tab_bar.add_theme_constant_override("v_separation", 6)
 	_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_root.add_child(_tab_bar)
 	for t in [["click", "👆 Клик"], ["up", "📈 Апгрейды"], ["skins", "🎨 Скины"], ["casino", "🎰 Казино"],
-			["crypto", "💎 Крипта"], ["chat", "💬 Чат"], ["friends", "👥 Друзья"], ["more", "📦 Ещё"]]:
+			["crypto", "💎 Крипта"], ["chat", "💬 Чат"], ["friends", "👥 Друзья"], ["games", "🎲 Игры"], ["more", "📦 Ещё"]]:
 		var b := _button(String(t[1]), 12)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.custom_minimum_size = Vector2(0, 42)
@@ -540,9 +548,11 @@ func _show_tab(tab: String) -> void:
 			social.on_show_chat()
 		elif tab == "friends":
 			social.refresh_friends()
+	if play != null and tab == "games":
+		play.on_show()
 
 func _tab_index(tab: String) -> int:
-	return ["click", "up", "skins", "casino", "crypto", "chat", "friends", "more"].find(tab)
+	return ["click", "up", "skins", "casino", "crypto", "chat", "friends", "games", "more"].find(tab)
 
 func _set_chat_badge(n: int) -> void:
 	var b: Button = _tab_btns.get("chat")
@@ -562,10 +572,25 @@ func _rebuild() -> void:
 		"crypto": _build_crypto()
 		"chat": _build_chat()
 		"friends": _build_friends()
+		"games":
+			if play != null:
+				play.build(_content)
+			else:
+				_content.add_child(_panel_text("Игры загружаются…"))
 		"more": _build_more()
 	_update_header()
 	if _scroll:
 		_scroll.set_deferred("scroll_vertical", 0)
+
+## Перестраивает вкладку, сохраняя положение прокрутки (ход в карточной партии
+## не должен выбрасывать игрока наверх).
+func _rebuild_keep_scroll() -> void:
+	var pos := 0
+	if _scroll:
+		pos = _scroll.scroll_vertical
+	_rebuild()
+	if _scroll:
+		_scroll.set_deferred("scroll_vertical", pos)
 
 # ── КЛИК ──────────────────────────────────────────────────────────────────────
 func _build_click() -> void:
@@ -1574,6 +1599,8 @@ func _begin_play() -> void:
 		_toast("👤 " + net.user_name + " · облако подключено")
 	if social != null and net != null and net.authed:
 		social.on_login()
+	if play != null and net != null and net.authed:
+		play.on_login()
 
 func _sync_check(delta: float) -> void:
 	if net == null or not net.authed or _pushing or _conflict_open:
@@ -1669,6 +1696,8 @@ func _on_logout() -> void:
 	net.forget()
 	if social != null:
 		social.on_logout()
+	if play != null:
+		play.on_logout()
 	game.new_game()
 	game.save()
 	_playing = false
@@ -1728,6 +1757,8 @@ func _on_link_changed(ok: bool, text: String) -> void:
 func _on_push(m: Dictionary) -> void:
 	if social != null:
 		social.on_push(m)
+	if play != null:
+		play.on_push(m)
 
 func _has_progress(g: VCGame) -> bool:
 	return int(g.s.get("clicks", 0)) > 0 or g.total_money() > 0.0 or not (g.s["upgrades"] as Dictionary).is_empty()
