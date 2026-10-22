@@ -217,6 +217,50 @@ func _one_card_table(pl: VCPlay, key: String) -> void:
 		await pl._card_act({ "act": "next" })
 		await _wait_until(func() -> bool: return String(pl.card_state.get("phase", "")) == "reveal" or bool(pl.card_state.get("over", false)), 6000)
 		ok("war: следующий раунд", String(pl.card_state.get("phase", "")) == "reveal" or bool(pl.card_state.get("over", false)), String(pl.card_state.get("phase", "")))
+	if key == "durak":
+		# атака или взятие через тот же путь, что и кнопки интерфейса
+		var acted := false
+		var hand0 := (pl.card_state.get("hand", []) as Array).size()
+		if int(pl.card_state.get("attacker", -1)) == 0:
+			await pl._card_act({ "act": "attack", "card": 0 })
+			await _wait_until(func() -> bool: return (pl.card_state.get("table", []) as Array).size() > 0, 5000)
+			acted = (pl.card_state.get("table", []) as Array).size() > 0
+		elif int(pl.card_state.get("attacker", -1)) == 1:
+			await _net2.request("card.act", { "act": "attack", "card": 0 })
+			await _wait_until(func() -> bool: return (pl.card_state.get("table", []) as Array).size() > 0, 5000)
+			await pl._card_act({ "act": "take" })
+			await _wait_until(func() -> bool: return (pl.card_state.get("table", []) as Array).is_empty() or bool(pl.card_state.get("over", false)), 5000)
+			acted = (pl.card_state.get("hand", []) as Array).size() > hand0
+		ok("durak: действие из UI", acted, "attacker=%s table=%s" % [str(pl.card_state.get("attacker", -1)), str(pl.card_state.get("table", []))])
+	if key == "cheat":
+		# выложить карту и поверить — обе кнопки используют _card_act
+		var ch0 := (pl.card_state.get("hand", []) as Array).size()
+		var chok := false
+		if int(pl.card_state.get("turn", -1)) == 0:
+			await pl._card_act({ "act": "play", "cards": [0] })
+			await _wait_until(func() -> bool: return String(pl.card_state.get("phase", "")) == "challenge", 5000)
+			chok = String(pl.card_state.get("phase", "")) == "challenge" and (pl.card_state.get("hand", []) as Array).size() == ch0 - 1
+			await _net2.request("card.act", { "act": "believe" })
+			await _wait_until(func() -> bool: return String(pl.card_state.get("phase", "")) == "place" or bool(pl.card_state.get("over", false)), 5000)
+			chok = chok and String(pl.card_state.get("phase", "")) == "place"
+		else:
+			await _net2.request("card.act", { "act": "play", "cards": [0] })
+			await _wait_until(func() -> bool: return String(pl.card_state.get("phase", "")) == "challenge", 5000)
+			await pl._card_act({ "act": "believe" })
+			await _wait_until(func() -> bool: return String(pl.card_state.get("phase", "")) == "place" or bool(pl.card_state.get("over", false)), 5000)
+			chok = String(pl.card_state.get("phase", "")) == "place"
+		ok("cheat: ход из UI", chok, "phase=%s hand=%d" % [str(pl.card_state.get("phase", "")), (pl.card_state.get("hand", []) as Array).size()])
+	if key == "poker":
+		# малый блайнд уравнивает, большой проверяет — должен открыться флоп
+		var turn0 := int(pl.card_state.get("turn", -1))
+		ok("poker: первым ходит малый блайнд", turn0 == 1, str(turn0))
+		if turn0 == 1:
+			await _net2.request("card.act", { "act": "call" })
+			await _wait_until(func() -> bool: return int(pl.card_state.get("turn", -1)) == 0, 5000)
+			await pl._card_act({ "act": "check" })
+			await _wait_until(func() -> bool: return String(pl.card_state.get("street", "")) == "flop" or bool(pl.card_state.get("over", false)), 6000)
+			var board: Array = pl.card_state.get("board", [])
+			ok("poker: флоп после UI-действий", String(pl.card_state.get("street", "")) == "flop" and board.size() == 3, "street=%s board=%d" % [str(pl.card_state.get("street", "")), board.size()])
 	pl.card_sel.clear()
 	_ui._rebuild()
 	ok("%s: интерфейс построен" % key, _ui._content.get_child_count() > 0, str(_ui._content.get_child_count()))

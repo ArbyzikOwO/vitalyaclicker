@@ -200,7 +200,7 @@ $g = "$env:LOCALAPPDATA\Programs\Godot\Godot_v4.7.2-stable_win64_console.exe"
 # 16 живых проверок: чат, ParrotAI, друзья, заявки, перевод и кошелёк
 & $g --headless --path godot --script res://tests/social_test.gd
 
-# 56 живых проверок: дуэль, рулетка, блэкджек, действия в пьянице и отрисовка всех столов
+# 60 живых проверок: дуэль, рулетка, блэкджек, ходы в пьянице, дураке, верю-не-верю и покере
 & $g --headless --path godot --script res://tests/play_test.gd
 
 # разбор настоящего data.bin из облака веб-версии (base64 в файле)
@@ -230,7 +230,7 @@ godot/
   tests/selftest.gd      headless-проверки (131)
   tests/cloud_test.gd    живой тест облака (34)
   tests/social_test.gd   живой тест чата, друзей и переводов (16)
-  tests/play_test.gd     живой тест игр (56)
+  tests/play_test.gd     живой тест игр (60)
   tests/web_save_test.gd разбор data.bin из веб-версии
   assets/skins/          фото скинов (перенесены из веб-версии)
 ```
